@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -10,6 +11,7 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_PATH = ROOT / "dashboard" / "state.json"
+LOG_PATH = ROOT / "dashboard" / "orchestrator.log"
 
 PROCESS: subprocess.Popen[str] | None = None
 LOCK = threading.Lock()
@@ -57,6 +59,8 @@ HTML = """<!doctype html>
     }
     .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .pill { border-radius: 999px; padding: 4px 10px; font-size: 12px; border: 1px solid var(--border); color: var(--muted); }
+    .progress-wrap { width: 100%; height: 10px; border-radius: 999px; background: #0a1528; border: 1px solid var(--border); overflow: hidden; }
+    .progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #2d75ff, #33d17a); transition: width 250ms ease; }
     .status-running { color: var(--run); }
     .status-completed { color: var(--ok); }
     .status-failed, .status-error { color: var(--err); }
@@ -118,6 +122,7 @@ HTML = """<!doctype html>
         <span id=\"overall_status\" class=\"pill\">idle</span>
         <span id=\"overall_progress\" class=\"pill\">0/0</span>
       </div>
+      <div class=\"progress-wrap\"><div id=\"progress_bar\" class=\"progress-bar\"></div></div>
       <div class=\"row\">
         <label>Case <input id=\"case\" value=\"uart_demo\"></label>
         <label>Runs <input id=\"runs\" type=\"number\" value=\"8\" min=\"1\" max=\"100\"></label>
@@ -125,8 +130,8 @@ HTML = """<!doctype html>
           <select id=\"mode\"><option value=\"mock\">mock</option><option value=\"real\">real</option></select>
         </label>
         <button id=\"start_btn\">Start Run</button>
-        <span id=\"proc_info\" class=\"meta\"></span>
       </div>
+      <div id=\"proc_info\" class=\"meta\"></div>
       <div id=\"overall_msg\" class=\"meta\"></div>
     </section>
 
@@ -140,17 +145,17 @@ HTML = """<!doctype html>
     <section class=\"layout-bottom\">
       <article class=\"card\">
         <h3>Overall Output</h3>
-        <pre id=\"overall_output\"></pre>
+        <pre id=\"overall_output\">No output yet. Start a run to populate the merged summarizer output.</pre>
       </article>
       <article class=\"card\">
         <h3>Latest UART</h3>
-        <pre id=\"latest_uart\"></pre>
+        <pre id=\"latest_uart\">No UART lines yet. Start a run to stream latest uart.log tail.</pre>
       </article>
     </section>
 
     <section class=\"card\">
       <h3>Run Tracker</h3>
-      <pre id=\"history\"></pre>
+      <pre id=\"history\">No runs yet.</pre>
     </section>
   </div>
 
@@ -164,13 +169,13 @@ async function startRun() {
   const res = await fetch('/api/start', {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
   });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({ok:false, message: 'Failed to parse start response'}));
   document.getElementById('proc_info').textContent = data.message || '';
 }
 
 function setText(id, value) {
   const el = document.getElementById(id);
-  if (el) el.textContent = value || '';
+  if (el) el.textContent = (value === undefined || value === null || value === '') ? '—' : value;
 }
 
 function applyStatusClass(id, status) {
@@ -190,26 +195,37 @@ async function refresh() {
   try {
     const res = await fetch('/api/state');
     const state = await res.json();
+    const p = await (await fetch('/api/process')).json();
     const o = state.overall || {};
 
     setText('overall_status', o.status || 'idle');
     applyStatusClass('overall_status', o.status || 'idle');
     setText('overall_progress', `${o.current_run || 0}/${o.runs_total || 0}`);
     setText('overall_msg', o.message || '');
+    const total = Number(o.runs_total || 0);
+    const cur = Number(o.current_run || 0);
+    const pct = total > 0 ? Math.max(0, Math.min(100, (cur / total) * 100)) : 0;
+    document.getElementById('progress_bar').style.width = `${pct}%`;
 
     for (const name of ['planner','coder','critic','summarizer']) {
       const a = (state.agents || {})[name] || {};
       applyAgentStatus(`${name}_status`, a.status || 'idle');
-      setText(`${name}_task`, a.task || '');
-      setText(`${name}_fragment`, a.fragment || '');
+      setText(`${name}_task`, a.task || 'Waiting for run.');
+      setText(`${name}_fragment`, a.fragment || 'No fragment yet.');
     }
 
-    setText('overall_output', state.overall_output || '');
-    setText('latest_uart', (state.latest_uart || []).join('\n'));
+    setText('overall_output', state.overall_output || 'No output yet. Start a run to populate summarizer output.');
+    setText('latest_uart', (state.latest_uart || []).join('\n') || 'No UART lines yet.');
     const history = (state.history || []).map(r =>
       `run ${r.run}: ${String(r.status || '').toUpperCase()}  rate=${r.uart_rate}  buf=${r.buffer_size}  errors=${r.error_count}  id=${r.run_id}`
     ).join('\n');
-    setText('history', history);
+    setText('history', history || 'No runs yet.');
+
+    const procMsg = p.running
+      ? `process: running (pid=${p.pid || 'n/a'})`
+      : `process: idle` + (p.exit_code !== null && p.exit_code !== undefined ? ` (last exit=${p.exit_code})` : '');
+    const logMsg = (p.log_tail || []).join('\n');
+    setText('proc_info', procMsg + (logMsg ? '\n' + logMsg : ''));
   } catch (_) {
     setText('overall_msg', 'Waiting for state...');
   }
@@ -236,7 +252,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/process":
             with LOCK:
                 running = PROCESS is not None and PROCESS.poll() is None
-            self._send_json({"running": running})
+                pid = PROCESS.pid if PROCESS is not None else None
+                exit_code = None if running or PROCESS is None else PROCESS.poll()
+            self._send_json({"running": running, "pid": pid, "exit_code": exit_code, "log_tail": self._read_log_tail()})
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -262,8 +280,32 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "message": "Run already in progress."}, code=409)
                 return
 
+            init_state = {
+                "overall": {
+                    "status": "running",
+                    "message": f"Launching run: case={case} mode={mode} runs={runs}",
+                    "case_id": case,
+                    "mode": mode,
+                    "runs_total": runs,
+                    "current_run": 0,
+                    "updated_at": "",
+                },
+                "agents": {
+                    "planner": {"status": "idle", "task": "Waiting", "fragment": ""},
+                    "coder": {"status": "idle", "task": "Waiting", "fragment": ""},
+                    "critic": {"status": "idle", "task": "Waiting", "fragment": ""},
+                    "summarizer": {"status": "idle", "task": "Waiting", "fragment": ""},
+                },
+                "latest_uart": [],
+                "last_analysis": {},
+                "overall_output": "",
+                "history": [],
+            }
+            STATE_PATH.write_text(json.dumps(init_state, indent=2), encoding="utf-8")
+            LOG_PATH.write_text("", encoding="utf-8")
+
             cmd = [
-                "python3",
+                sys.executable,
                 "orchestrator.py",
                 "--case",
                 case,
@@ -274,11 +316,12 @@ class Handler(BaseHTTPRequestHandler):
                 "--state-file",
                 str(STATE_PATH),
             ]
+            logf = LOG_PATH.open("a", encoding="utf-8")
             PROCESS = subprocess.Popen(
                 cmd,
                 cwd=str(ROOT),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=logf,
+                stderr=logf,
                 text=True,
             )
 
@@ -310,6 +353,12 @@ class Handler(BaseHTTPRequestHandler):
             return json.loads(STATE_PATH.read_text(encoding="utf-8"))
         except Exception:
             return {"overall": {"status": "error", "message": "Failed to parse state file."}}
+
+    def _read_log_tail(self, max_lines: int = 8) -> list[str]:
+        if not LOG_PATH.exists():
+            return []
+        lines = LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
+        return lines[-max_lines:]
 
     def _send_html(self, html: str) -> None:
         body = html.encode("utf-8")

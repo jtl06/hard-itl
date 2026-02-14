@@ -110,6 +110,7 @@ Dashboard includes:
 - latest UART tail from current run
 
 Use the Start Run controls in the UI to begin `mock` or `real` runs.
+If start fails, the UI now shows process/log tail from `dashboard/orchestrator.log`.
 
 Real mode example:
 
