@@ -162,16 +162,25 @@ HTML = """<!doctype html>
 
 <script>
 async function startRun() {
-  const payload = {
-    case: document.getElementById('case').value,
-    runs: Number(document.getElementById('runs').value || 8),
-    mode: document.getElementById('mode').value,
-  };
-  const res = await fetch('/api/run', {
-    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
-  });
-  const data = await res.json().catch(() => ({ok:false, message: 'Failed to parse start response'}));
-  document.getElementById('proc_info').textContent = data.message || '';
+  try {
+    const payload = {
+      case: document.getElementById('case').value,
+      runs: Number(document.getElementById('runs').value || 8),
+      mode: document.getElementById('mode').value,
+    };
+    const res = await fetch('/api/run', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({ok:false, message: 'Failed to parse start response'}));
+    const msg = data.message || `HTTP ${res.status}`;
+    document.getElementById('proc_info').textContent = msg;
+    if (!res.ok) {
+      document.getElementById('overall_msg').textContent = msg;
+    }
+  } catch (err) {
+    document.getElementById('proc_info').textContent = `Start failed: ${String(err)}`;
+    document.getElementById('overall_msg').textContent = 'Unable to reach dashboard backend.';
+  }
 }
 
 function setText(id, value) {
@@ -254,6 +263,7 @@ function initSSE() {
 document.getElementById('start_btn').addEventListener('click', startRun);
 refreshOnce();
 initSSE();
+setInterval(refreshOnce, 1500);
 </script>
 </body>
 </html>
@@ -289,27 +299,77 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def _handle_start(self) -> None:
-        content_len = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(content_len) if content_len else b"{}"
-        payload = json.loads(body.decode("utf-8") or "{}")
+        try:
+            content_len = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(content_len) if content_len else b"{}"
+            payload = json.loads(body.decode("utf-8") or "{}")
 
-        case = str(payload.get("case", "uart_demo"))
-        runs = int(payload.get("runs", 8))
-        mode = str(payload.get("mode", "mock"))
+            case = str(payload.get("case", "uart_demo"))
+            runs = int(payload.get("runs", 8))
+            mode = str(payload.get("mode", "mock"))
 
-        with LOCK:
-            global PROCESS
-            if PROCESS is not None and PROCESS.poll() is None:
-                self._send_json({"ok": False, "message": "Run already in progress."}, code=409)
-                return
+            with LOCK:
+                global PROCESS
+                if PROCESS is not None and PROCESS.poll() is None:
+                    self._send_json({"ok": False, "message": "Run already in progress."}, code=409)
+                    return
 
-            init_state = {
+                init_state = {
+                    "overall": {
+                        "status": "running",
+                        "message": f"Launching run: case={case} mode={mode} runs={runs}",
+                        "case_id": case,
+                        "mode": mode,
+                        "runs_total": runs,
+                        "current_run": 0,
+                        "updated_at": "",
+                    },
+                    "agents": {
+                        "planner": {"status": "idle", "task": "Waiting", "fragment": ""},
+                        "coder": {"status": "idle", "task": "Waiting", "fragment": ""},
+                        "critic": {"status": "idle", "task": "Waiting", "fragment": ""},
+                        "summarizer": {"status": "idle", "task": "Waiting", "fragment": ""},
+                    },
+                    "latest_uart": [],
+                    "last_analysis": {},
+                    "overall_output": "",
+                    "history": [],
+                }
+                STATE_PATH.write_text(json.dumps(init_state, indent=2), encoding="utf-8")
+                LOG_PATH.write_text("", encoding="utf-8")
+
+                cmd = [
+                    sys.executable,
+                    "orchestrator.py",
+                    "--case",
+                    case,
+                    "--runs",
+                    str(runs),
+                    "--mode",
+                    mode,
+                    "--state-file",
+                    str(STATE_PATH),
+                    "--live-uart",
+                    "--trace",
+                ]
+                logf = LOG_PATH.open("a", encoding="utf-8")
+                PROCESS = subprocess.Popen(
+                    cmd,
+                    cwd=str(ROOT),
+                    stdout=logf,
+                    stderr=logf,
+                    text=True,
+                )
+
+            self._send_json({"ok": True, "message": f"Started {mode} run for case={case} runs={runs}."})
+        except Exception as exc:
+            fail_state = {
                 "overall": {
-                    "status": "running",
-                    "message": f"Launching run: case={case} mode={mode} runs={runs}",
-                    "case_id": case,
-                    "mode": mode,
-                    "runs_total": runs,
+                    "status": "failed",
+                    "message": f"Failed to start run: {exc}",
+                    "case_id": "",
+                    "mode": "",
+                    "runs_total": 0,
                     "current_run": 0,
                     "updated_at": "",
                 },
@@ -324,33 +384,8 @@ class Handler(BaseHTTPRequestHandler):
                 "overall_output": "",
                 "history": [],
             }
-            STATE_PATH.write_text(json.dumps(init_state, indent=2), encoding="utf-8")
-            LOG_PATH.write_text("", encoding="utf-8")
-
-            cmd = [
-                sys.executable,
-                "orchestrator.py",
-                "--case",
-                case,
-                "--runs",
-                str(runs),
-                "--mode",
-                mode,
-                "--state-file",
-                str(STATE_PATH),
-                "--live-uart",
-                "--trace",
-            ]
-            logf = LOG_PATH.open("a", encoding="utf-8")
-            PROCESS = subprocess.Popen(
-                cmd,
-                cwd=str(ROOT),
-                stdout=logf,
-                stderr=logf,
-                text=True,
-            )
-
-        self._send_json({"ok": True, "message": f"Started {mode} run for case={case} runs={runs}."})
+            STATE_PATH.write_text(json.dumps(fail_state, indent=2), encoding="utf-8")
+            self._send_json({"ok": False, "message": f"Failed to start run: {exc}"}, code=500)
 
     def _send_sse_stream(self) -> None:
         self.send_response(HTTPStatus.OK)
