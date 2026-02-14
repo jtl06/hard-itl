@@ -4,6 +4,7 @@ import glob
 import os
 import select
 import subprocess
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -101,17 +102,10 @@ def capture_uart(
         ]
         return lines, False, "serial auto-detect failed", ""
 
-    stty = subprocess.run(
-        ["stty", "-f", port, str(baud), "raw", "-echo", "-icanon", "min", "0", "time", "1"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    stty = _configure_serial_port(port=port, baud=baud)
     if stty.returncode != 0:
         lines = [
-            f"{_iso(datetime.now(timezone.utc))} RUN_START {run_id}",
             f"{_iso(datetime.now(timezone.utc))} ERROR SERIAL_CONFIG_FAILED {stty.stderr.strip() or stty.stdout.strip()}",
-            f"{_iso(datetime.now(timezone.utc))} RUN_END {run_id}",
         ]
         return lines, False, "serial port configuration failed", port
 
@@ -129,7 +123,6 @@ def _read_until_end_marker(port: str, run_id: str, timeout_s: float) -> tuple[li
     found_end = False
 
     try:
-        out.append(f"{_iso(datetime.now(timezone.utc))} RUN_START {run_id}")
         while time.monotonic() < deadline:
             remaining = max(0.0, deadline - time.monotonic())
             ready, _, _ = select.select([fd], [], [], min(0.25, remaining))
@@ -160,12 +153,35 @@ def _read_until_end_marker(port: str, run_id: str, timeout_s: float) -> tuple[li
 
         if not found_end:
             out.append(f"{_iso(datetime.now(timezone.utc))} ERROR TIMEOUT missing RUN_END")
-            out.append(f"{_iso(datetime.now(timezone.utc))} RUN_END {run_id}")
-            found_end = True
     finally:
         os.close(fd)
 
     return out, found_end
+
+
+def _configure_serial_port(port: str, baud: int) -> subprocess.CompletedProcess[str]:
+    """Configure serial settings across Linux/macOS.
+
+    Linux expects `stty -F`, while macOS/BSD expects `stty -f`.
+    """
+    if sys.platform.startswith("linux"):
+        flag_order = ["-F", "-f"]
+    else:
+        flag_order = ["-f", "-F"]
+
+    last: subprocess.CompletedProcess[str] | None = None
+    for flag in flag_order:
+        proc = subprocess.run(
+            ["stty", flag, port, str(baud), "raw", "-echo", "-icanon", "min", "0", "time", "1"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        last = proc
+        if proc.returncode == 0:
+            return proc
+    assert last is not None
+    return last
 
 
 def _simulate_mock_uart(run_id: str, params: dict[str, Any]) -> tuple[list[str], bool, str]:

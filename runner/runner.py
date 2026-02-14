@@ -21,6 +21,10 @@ class RunnerConfig:
     serial_timeout_s: float = 8.0
     reenumeration_timeout_s: float = 8.0
     prefer_by_id: bool = True
+    build_cmd: str = ""
+    build_cwd: str = "."
+    real_elf_path: str = ""
+    real_uf2_path: str = ""
 
 
 class Runner:
@@ -42,7 +46,12 @@ class Runner:
 
         fw_dir = run_dir / "firmware"
         fw_dir.mkdir(parents=True, exist_ok=True)
-        elf_path, uf2_path = self._build_firmware_artifacts(fw_dir, case_id=case_id, params=params)
+        elf_path, uf2_path = self._build_firmware_artifacts(
+            fw_dir=fw_dir,
+            case_id=case_id,
+            params=params,
+            mode=mode,
+        )
 
         diagnostics: list[str] = []
         try:
@@ -111,9 +120,57 @@ class Runner:
             "diagnostics": diagnostics,
         }
 
-    def _build_firmware_artifacts(self, fw_dir: Path, case_id: str, params: dict[str, Any]) -> tuple[Path, Path]:
+    def _build_firmware_artifacts(
+        self,
+        fw_dir: Path,
+        case_id: str,
+        params: dict[str, Any],
+        mode: str,
+    ) -> tuple[Path, Path]:
         elf = fw_dir / "firmware.elf"
         uf2 = fw_dir / "firmware.uf2"
+        if mode == "real":
+            if self.config.build_cmd:
+                proc = subprocess.run(
+                    self.config.build_cmd,
+                    cwd=self.config.build_cwd,
+                    capture_output=True,
+                    text=True,
+                    shell=True,
+                    check=False,
+                )
+                if proc.returncode != 0:
+                    msg = (
+                        "build command failed. "
+                        f"cmd='{self.config.build_cmd}' rc={proc.returncode} "
+                        f"stdout='{proc.stdout.strip()[:200]}' stderr='{proc.stderr.strip()[:200]}'"
+                    )
+                    raise FlashError(msg)
+
+            if not self.config.real_uf2_path:
+                raise FlashError(
+                    "real mode requires runner.real_uf2_path in config.yaml (path to built firmware UF2)"
+                )
+
+            src_uf2 = Path(self.config.real_uf2_path)
+            if not src_uf2.exists():
+                raise FlashError(f"UF2 artifact not found: {src_uf2}")
+
+            uf2.write_bytes(src_uf2.read_bytes())
+
+            if self.config.real_elf_path:
+                src_elf = Path(self.config.real_elf_path)
+                if src_elf.exists():
+                    elf.write_bytes(src_elf.read_bytes())
+                else:
+                    elf.write_text(
+                        f"ELF_MISSING {src_elf}\n",
+                        encoding="utf-8",
+                    )
+            else:
+                elf.write_text("ELF_PATH_NOT_CONFIGURED\n", encoding="utf-8")
+            return elf, uf2
+
         meta = json.dumps({"case_id": case_id, "params": params}, indent=2)
         elf.write_text(f"ELF_PLACEHOLDER\n{meta}\n", encoding="utf-8")
         uf2.write_text(f"UF2_PLACEHOLDER\n{meta}\n", encoding="utf-8")

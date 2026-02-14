@@ -9,6 +9,7 @@ from typing import Any
 
 from agents import AnalystAgent, PlannerAgent, TriageAgent
 from agents.orchestrator_nim import NIMOrchestrator, parse_next_experiments
+from runner.flash import FlashError
 from runner import Runner, RunnerConfig
 
 
@@ -72,6 +73,10 @@ def run_case(
         serial_timeout_s=float(cfg.get("runner", {}).get("serial_timeout_s", 8.0)),
         reenumeration_timeout_s=float(cfg.get("runner", {}).get("reenumeration_timeout_s", 8.0)),
         prefer_by_id=bool(cfg.get("runner", {}).get("prefer_by_id", True)),
+        build_cmd=str(cfg.get("runner", {}).get("build_cmd", "")),
+        build_cwd=str(cfg.get("runner", {}).get("build_cwd", ".")),
+        real_elf_path=str(cfg.get("runner", {}).get("real_elf_path", "")),
+        real_uf2_path=str(cfg.get("runner", {}).get("real_uf2_path", "")),
     )
 
     runner = Runner(runner_cfg)
@@ -219,14 +224,19 @@ def main() -> None:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    rows = run_case(
-        case_id=args.case,
-        runs=args.runs,
-        mode=args.mode,
-        live=args.live,
-        uart_tail_lines=args.uart_tail_lines,
-        show_agent_fragments=args.show_agent_fragments,
-    )
+    try:
+        rows = run_case(
+            case_id=args.case,
+            runs=args.runs,
+            mode=args.mode,
+            live=args.live,
+            uart_tail_lines=args.uart_tail_lines,
+            show_agent_fragments=args.show_agent_fragments,
+        )
+    except FlashError as exc:
+        print(f"Runner configuration error: {exc}")
+        print("Set runner.build_cmd and runner.real_uf2_path in config.yaml before using --mode real.")
+        raise SystemExit(2)
     if args.json:
         print(json.dumps(rows, indent=2))
     else:

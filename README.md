@@ -4,7 +4,8 @@ Local-only multi-agent HIL pipeline with a strict boundary: only `runner/` may t
 
 ## Entry points
 
-- `make demo`
+- `make mock`
+- `make real`
 - `make demo-live`
 - `python3 orchestrator.py --case uart_demo --runs 8`
 
@@ -76,7 +77,7 @@ tools/smoke_concurrency.sh
 
 ```bash
 make venv
-make demo
+make mock
 ```
 
 Live operator view (continuous diagnostics + UART tail + agent fragments):
@@ -96,3 +97,24 @@ Real mode example:
 ```bash
 PYTHONPATH=. .venv/bin/python orchestrator.py --case uart_demo --runs 8 --mode real
 ```
+
+## Real hardware setup
+
+1. Set `runner.build_cmd`, `runner.real_uf2_path` (and optionally `runner.real_elf_path`) in `config.yaml`.
+   - Start from `config.real.example.yaml`.
+2. Ensure RP2350 is connected and accessible via `/dev/serial/by-id/*` or `/dev/ttyACM*`.
+3. Ensure one flash backend is available:
+   - UF2 mount, or
+   - `picotool`, or
+   - `openocd` with `OPENOCD_CFG`.
+
+Then run:
+
+```bash
+make demo-real
+```
+
+Notes:
+- Real mode now uses Linux/macOS compatible serial config (`stty -F`/`-f`).
+- UART capture in real mode reads actual DUT output only; no synthetic `RUN_START/RUN_END` lines are injected.
+- Capture stops when `RUN_END <run_id>` (or any `RUN_END ...`) is observed, otherwise on timeout.

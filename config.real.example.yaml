@@ -1,14 +1,14 @@
 runner:
   flash_method: auto
-  serial_port: ""
+  serial_port: ""                  # leave empty for autodetect
   serial_baud: 115200
-  serial_timeout_s: 8
-  reenumeration_timeout_s: 8
+  serial_timeout_s: 12
+  reenumeration_timeout_s: 12
   prefer_by_id: true
-  build_cmd: ""
+  build_cmd: "make -C firmware all" # customize for your firmware build
   build_cwd: "."
-  real_elf_path: ""
-  real_uf2_path: ""
+  real_elf_path: "firmware/build/firmware.elf"
+  real_uf2_path: "firmware/build/firmware.uf2"
 
 paths:
   runs_root: runs
