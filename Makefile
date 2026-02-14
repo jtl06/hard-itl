@@ -3,7 +3,7 @@ VENV ?= .venv
 PIP := $(VENV)/bin/pip
 PY := $(VENV)/bin/python
 
-.PHONY: venv install demo mock real demo-live demo-real nim-smoke clean
+.PHONY: venv install demo mock real demo-live demo-real gui nim-smoke clean
 
 venv:
 	$(PYTHON) -m venv $(VENV)
@@ -27,6 +27,9 @@ demo-live: install
 
 demo-real: install
 	PYTHONPATH=. $(PY) orchestrator.py --case uart_demo --runs 8 --mode real --live --show-agent-fragments
+
+gui: install
+	PYTHONPATH=. $(PY) dashboard/server.py
 
 clean:
 	rm -rf $(VENV)

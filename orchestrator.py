@@ -4,8 +4,9 @@ import argparse
 import asyncio
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from agents import AnalystAgent, PlannerAgent, TriageAgent
 from agents.orchestrator_nim import NIMOrchestrator, parse_next_experiments
@@ -58,6 +59,7 @@ def run_case(
     live: bool = False,
     uart_tail_lines: int = 8,
     show_agent_fragments: bool = False,
+    state_file: str = "",
 ) -> list[dict[str, Any]]:
     cfg = parse_config("config.yaml")
     nim_cfg = cfg.get("nim", {})
@@ -93,17 +95,58 @@ def run_case(
     if not case_cfg:
         params = planner.initial_request()
 
+    state_path = Path(state_file) if state_file else None
+    state = _init_state(case_id=case_id, runs=runs, mode=mode)
+    if state_path is not None:
+        _write_state(state_path, state)
+
     rows: list[dict[str, Any]] = []
     for run_index in range(1, runs + 1):
+        _set_overall(state, status="running", message=f"Running {run_index}/{runs}", current_run=run_index)
+        _set_agent(state, "planner", "running", f"Preparing run params: {params}")
+        _set_agent(state, "coder", "idle", "Waiting for runner evidence.")
+        _set_agent(state, "critic", "idle", "Waiting for runner evidence.")
+        _set_agent(state, "summarizer", "idle", "Waiting for fan-in.")
+        if state_path is not None:
+            _write_state(state_path, state)
         if live:
             print(f"[run {run_index}/{runs}] start case={case_id} params={params}")
         run_result = runner.execute(case_id=case_id, run_index=run_index, params=params, mode=mode)
         run_dir = Path(run_result["run_dir"])
 
+        _set_agent(state, "planner", "done", "Run params fixed for this iteration.")
+        _set_overall(state, status="running", message=f"Analyzing run {run_index}/{runs}", current_run=run_index)
+        _update_latest_uart(state, run_dir=run_dir, tail_lines=uart_tail_lines)
+        if state_path is not None:
+            _write_state(state_path, state)
+
         analysis = analyst.analyze(run_dir)
         triage = triage_agent.triage(run_dir, analysis=analysis, params=params)
-        nim_summary = _nim_guidance(nim_orchestrator, case_id, run_result, analysis, triage)
+        nim_summary = _nim_guidance(
+            nim_orchestrator,
+            case_id,
+            run_result,
+            analysis,
+            triage,
+            status_updater=lambda role, s, msg: _nim_status_update(state, state_path, role, s, msg),
+        )
         nim_next_experiments = parse_next_experiments(nim_summary)
+        state["overall_output"] = nim_summary
+        state["history"].append(
+            {
+                "run": run_index,
+                "run_id": run_result["run_id"],
+                "status": analysis.pass_fail,
+                "uart_rate": params["uart_rate"],
+                "buffer_size": params["buffer_size"],
+                "error_count": analysis.metrics["error_count"],
+                "run_dir": run_result["run_dir"],
+            }
+        )
+        state["last_analysis"] = analysis.metrics
+        _update_latest_uart(state, run_dir=run_dir, tail_lines=uart_tail_lines)
+        if state_path is not None:
+            _write_state(state_path, state)
         if live:
             _print_live_run_details(
                 run_result=run_result,
@@ -130,6 +173,13 @@ def run_case(
         else:
             params = planner.next_request(params, analysis=analysis, triage=triage)
 
+    _set_overall(state, status="completed", message="Run sequence complete", current_run=runs)
+    for role in ("planner", "coder", "critic", "summarizer"):
+        if state["agents"][role]["status"] == "running":
+            _set_agent(state, role, "done", state["agents"][role]["task"])
+    if state_path is not None:
+        _write_state(state_path, state)
+
     return rows
 
 
@@ -139,8 +189,12 @@ def _nim_guidance(
     run_result: dict[str, Any],
     analysis: Any,
     triage: Any,
+    status_updater: Callable[[str, str, str], None] | None = None,
 ) -> str:
     if nim_orchestrator is None:
+        if status_updater is not None:
+            for role in ("planner", "coder", "critic", "summarizer"):
+                status_updater(role, "disabled", "NIM orchestration disabled.")
         return "NIM orchestration disabled via config."
 
     prompt = (
@@ -153,9 +207,79 @@ def _nim_guidance(
         "Generate next experiments, minimal instrumentation suggestions, risk review, and merged demo guidance."
     )
     try:
-        return asyncio.run(nim_orchestrator.run(prompt))
+        return asyncio.run(nim_orchestrator.run(prompt, status_callback=status_updater))
     except Exception as exc:
+        if status_updater is not None:
+            status_updater("summarizer", "error", str(exc))
         return nim_orchestrator._fallback_summary(str(exc), prompt)
+
+
+def _init_state(case_id: str, runs: int, mode: str) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "overall": {
+            "status": "idle",
+            "message": "Waiting to start",
+            "case_id": case_id,
+            "mode": mode,
+            "runs_total": runs,
+            "current_run": 0,
+            "updated_at": now,
+        },
+        "agents": {
+            "planner": {"status": "idle", "task": "Waiting", "fragment": "", "updated_at": now},
+            "coder": {"status": "idle", "task": "Waiting", "fragment": "", "updated_at": now},
+            "critic": {"status": "idle", "task": "Waiting", "fragment": "", "updated_at": now},
+            "summarizer": {"status": "idle", "task": "Waiting", "fragment": "", "updated_at": now},
+        },
+        "latest_uart": [],
+        "last_analysis": {},
+        "overall_output": "",
+        "history": [],
+    }
+
+
+def _write_state(path: Path, state: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def _set_overall(state: dict[str, Any], status: str, message: str, current_run: int) -> None:
+    state["overall"]["status"] = status
+    state["overall"]["message"] = message
+    state["overall"]["current_run"] = current_run
+    state["overall"]["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def _set_agent(state: dict[str, Any], role: str, status: str, task: str) -> None:
+    frag = task
+    if len(frag) > 180:
+        frag = frag[:177] + "..."
+    state["agents"][role]["status"] = status
+    state["agents"][role]["task"] = task
+    state["agents"][role]["fragment"] = frag
+    state["agents"][role]["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def _nim_status_update(
+    state: dict[str, Any],
+    state_path: Path | None,
+    role: str,
+    status: str,
+    message: str,
+) -> None:
+    _set_agent(state, role, status, message)
+    if state_path is not None:
+        _write_state(state_path, state)
+
+
+def _update_latest_uart(state: dict[str, Any], run_dir: Path, tail_lines: int) -> None:
+    uart_path = run_dir / "uart.log"
+    if not uart_path.exists():
+        state["latest_uart"] = []
+        return
+    lines = [ln.rstrip("\n") for ln in uart_path.read_text(encoding="utf-8").splitlines()]
+    state["latest_uart"] = lines[-tail_lines:]
 
 
 def _print_live_run_details(
@@ -221,6 +345,7 @@ def main() -> None:
         action="store_true",
         help="Print short planner/coder/critic response fragments in live mode",
     )
+    parser.add_argument("--state-file", default="", help="Write live dashboard state JSON to this path")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -232,8 +357,18 @@ def main() -> None:
             live=args.live,
             uart_tail_lines=args.uart_tail_lines,
             show_agent_fragments=args.show_agent_fragments,
+            state_file=args.state_file,
         )
     except FlashError as exc:
+        if args.state_file:
+            fail_state = _init_state(case_id=args.case, runs=args.runs, mode=args.mode)
+            _set_overall(
+                fail_state,
+                status="failed",
+                message=f"Runner configuration error: {exc}",
+                current_run=fail_state["overall"]["current_run"],
+            )
+            _write_state(Path(args.state_file), fail_state)
         print(f"Runner configuration error: {exc}")
         print("Set runner.build_cmd and runner.real_uf2_path in config.yaml before using --mode real.")
         raise SystemExit(2)

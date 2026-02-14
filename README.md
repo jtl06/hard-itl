@@ -7,6 +7,7 @@ Local-only multi-agent HIL pipeline with a strict boundary: only `runner/` may t
 - `make mock`
 - `make real`
 - `make demo-live`
+- `make gui`
 - `python3 orchestrator.py --case uart_demo --runs 8`
 
 ## Truth layer and artifacts
@@ -91,6 +92,24 @@ Equivalent direct command:
 ```bash
 python3 orchestrator.py --case uart_demo --runs 8 --mode mock --live --show-agent-fragments
 ```
+
+## GUI dashboard
+
+Launch:
+
+```bash
+make gui
+```
+
+Then open `http://127.0.0.1:8765`.
+
+Dashboard includes:
+- 4 agent panels (`planner`, `coder`, `critic`, `summarizer`) with live status + output fragment
+- overall status tracker (state, progress, run message)
+- overall merged output (summarizer result)
+- latest UART tail from current run
+
+Use the Start Run controls in the UI to begin `mock` or `real` runs.
 
 Real mode example:
 

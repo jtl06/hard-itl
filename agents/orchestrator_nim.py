@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 from dataclasses import dataclass
+from typing import Callable
 
 try:
     import aiohttp
@@ -27,13 +28,21 @@ class NIMOrchestrator:
         self.timeout_s = float(os.getenv("NIM_TIMEOUT_S", "3.0"))
         self.last_fanout: list[AgentOutput] = []
 
-    async def run(self, user_prompt: str) -> str:
+    async def run(
+        self,
+        user_prompt: str,
+        status_callback: Callable[[str, str, str], None] | None = None,
+    ) -> str:
         if aiohttp is None:
             self.last_fanout = [
                 AgentOutput("planner", "Fallback: run uart_rate=230400,buffer_size=64 then 115200/128."),
                 AgentOutput("coder", "Fallback: ensure timestamped UART lines and explicit ERROR codes."),
                 AgentOutput("critic", "Fallback: keep hardware access constrained to runner module."),
             ]
+            if status_callback is not None:
+                for item in self.last_fanout:
+                    status_callback(item.role, "fallback", item.text)
+                status_callback("summarizer", "fallback", "Using deterministic fallback summary.")
             return self._fallback_summary("aiohttp missing", user_prompt)
 
         planner_prompt = (
@@ -55,9 +64,9 @@ class NIMOrchestrator:
 
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout_s)) as session:
             tasks = [
-                self._call_agent(session, "planner", planner_prompt, user_prompt),
-                self._call_agent(session, "coder", coder_prompt, user_prompt),
-                self._call_agent(session, "critic", critic_prompt, user_prompt),
+                self._call_agent(session, "planner", planner_prompt, user_prompt, status_callback),
+                self._call_agent(session, "coder", coder_prompt, user_prompt, status_callback),
+                self._call_agent(session, "critic", critic_prompt, user_prompt, status_callback),
             ]
             fanout_results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -65,15 +74,26 @@ class NIMOrchestrator:
             for role, item in zip(["planner", "coder", "critic"], fanout_results):
                 if isinstance(item, Exception):
                     normalized.append(AgentOutput(role=role, text=f"{role} unavailable: {item}"))
+                    if status_callback is not None:
+                        status_callback(role, "error", str(item))
                 else:
                     normalized.append(item)
             self.last_fanout = normalized
 
             merged_input = "\n\n".join([f"[{x.role}]\n{x.text}" for x in normalized])
-            summary = await self._call_agent(session, "summarizer", summarizer_prompt, merged_input)
+            summary = await self._call_agent(session, "summarizer", summarizer_prompt, merged_input, status_callback)
             return summary.text
 
-    async def _call_agent(self, session: aiohttp.ClientSession, role: str, system_prompt: str, user_prompt: str) -> AgentOutput:
+    async def _call_agent(
+        self,
+        session: aiohttp.ClientSession,
+        role: str,
+        system_prompt: str,
+        user_prompt: str,
+        status_callback: Callable[[str, str, str], None] | None = None,
+    ) -> AgentOutput:
+        if status_callback is not None:
+            status_callback(role, "running", "Working on current evidence bundle.")
         payload = {
             "model": self.model,
             "messages": [
@@ -90,6 +110,8 @@ class NIMOrchestrator:
         text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
         if not text:
             text = f"{role} produced empty output"
+        if status_callback is not None:
+            status_callback(role, "done", text)
         return AgentOutput(role=role, text=text)
 
     def _fallback_summary(self, reason: str, prompt: str) -> str:

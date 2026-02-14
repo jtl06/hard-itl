@@ -1,0 +1,340 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import threading
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlparse
+
+ROOT = Path(__file__).resolve().parents[1]
+STATE_PATH = ROOT / "dashboard" / "state.json"
+
+PROCESS: subprocess.Popen[str] | None = None
+LOCK = threading.Lock()
+
+HTML = """<!doctype html>
+<html>
+<head>
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />
+  <title>HIL Agent Dashboard</title>
+  <style>
+    :root {
+      --bg: #0b1320;
+      --panel: #121e33;
+      --panel2: #172742;
+      --text: #e9f0ff;
+      --muted: #95a8c8;
+      --ok: #33d17a;
+      --warn: #f6c453;
+      --err: #ff6b6b;
+      --run: #4da3ff;
+      --border: #2a3f62;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 15% 0%, #1b2a4a 0%, var(--bg) 45%);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+    .top {
+      background: linear-gradient(130deg, var(--panel), var(--panel2));
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .pill { border-radius: 999px; padding: 4px 10px; font-size: 12px; border: 1px solid var(--border); color: var(--muted); }
+    .status-running { color: var(--run); }
+    .status-completed { color: var(--ok); }
+    .status-failed, .status-error { color: var(--err); }
+    label { font-size: 13px; color: var(--muted); }
+    input, select, button {
+      background: #0f1a2d;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+    button { cursor: pointer; background: #1d3359; }
+    button:hover { filter: brightness(1.1); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(260px, 1fr));
+      gap: 12px;
+    }
+    .card {
+      background: linear-gradient(145deg, #121f36, #0f1a2d);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      min-height: 160px;
+    }
+    .card h3 { margin: 0 0 8px 0; font-size: 15px; }
+    .meta { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #d8e5ff;
+      font-size: 12px;
+      line-height: 1.4;
+      max-height: 210px;
+      overflow: auto;
+      padding: 8px;
+      border-radius: 8px;
+      border: 1px solid #21355a;
+      background: #0a1528;
+    }
+    .agent-status { font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }
+    .layout-bottom {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 12px;
+    }
+    @media (max-width: 920px) {
+      .grid, .layout-bottom { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class=\"wrap\">
+    <section class=\"top\">
+      <div class=\"row\">
+        <h2 style=\"margin:0\">HIL Multi-Agent Dashboard</h2>
+        <span id=\"overall_status\" class=\"pill\">idle</span>
+        <span id=\"overall_progress\" class=\"pill\">0/0</span>
+      </div>
+      <div class=\"row\">
+        <label>Case <input id=\"case\" value=\"uart_demo\"></label>
+        <label>Runs <input id=\"runs\" type=\"number\" value=\"8\" min=\"1\" max=\"100\"></label>
+        <label>Mode
+          <select id=\"mode\"><option value=\"mock\">mock</option><option value=\"real\">real</option></select>
+        </label>
+        <button id=\"start_btn\">Start Run</button>
+        <span id=\"proc_info\" class=\"meta\"></span>
+      </div>
+      <div id=\"overall_msg\" class=\"meta\"></div>
+    </section>
+
+    <section class=\"grid\">
+      <article class=\"card\"><h3>Planner</h3><div id=\"planner_status\" class=\"agent-status\"></div><div id=\"planner_task\" class=\"meta\"></div><pre id=\"planner_fragment\"></pre></article>
+      <article class=\"card\"><h3>Coder</h3><div id=\"coder_status\" class=\"agent-status\"></div><div id=\"coder_task\" class=\"meta\"></div><pre id=\"coder_fragment\"></pre></article>
+      <article class=\"card\"><h3>Critic</h3><div id=\"critic_status\" class=\"agent-status\"></div><div id=\"critic_task\" class=\"meta\"></div><pre id=\"critic_fragment\"></pre></article>
+      <article class=\"card\"><h3>Summarizer</h3><div id=\"summarizer_status\" class=\"agent-status\"></div><div id=\"summarizer_task\" class=\"meta\"></div><pre id=\"summarizer_fragment\"></pre></article>
+    </section>
+
+    <section class=\"layout-bottom\">
+      <article class=\"card\">
+        <h3>Overall Output</h3>
+        <pre id=\"overall_output\"></pre>
+      </article>
+      <article class=\"card\">
+        <h3>Latest UART</h3>
+        <pre id=\"latest_uart\"></pre>
+      </article>
+    </section>
+
+    <section class=\"card\">
+      <h3>Run Tracker</h3>
+      <pre id=\"history\"></pre>
+    </section>
+  </div>
+
+<script>
+async function startRun() {
+  const payload = {
+    case: document.getElementById('case').value,
+    runs: Number(document.getElementById('runs').value || 8),
+    mode: document.getElementById('mode').value,
+  };
+  const res = await fetch('/api/start', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  document.getElementById('proc_info').textContent = data.message || '';
+}
+
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value || '';
+}
+
+function applyStatusClass(id, status) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'pill status-' + (status || 'idle');
+}
+
+function applyAgentStatus(id, status) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = (status || 'idle');
+  el.style.color = status === 'done' ? 'var(--ok)' : status === 'running' ? 'var(--run)' : status === 'error' ? 'var(--err)' : 'var(--muted)';
+}
+
+async function refresh() {
+  try {
+    const res = await fetch('/api/state');
+    const state = await res.json();
+    const o = state.overall || {};
+
+    setText('overall_status', o.status || 'idle');
+    applyStatusClass('overall_status', o.status || 'idle');
+    setText('overall_progress', `${o.current_run || 0}/${o.runs_total || 0}`);
+    setText('overall_msg', o.message || '');
+
+    for (const name of ['planner','coder','critic','summarizer']) {
+      const a = (state.agents || {})[name] || {};
+      applyAgentStatus(`${name}_status`, a.status || 'idle');
+      setText(`${name}_task`, a.task || '');
+      setText(`${name}_fragment`, a.fragment || '');
+    }
+
+    setText('overall_output', state.overall_output || '');
+    setText('latest_uart', (state.latest_uart || []).join('\n'));
+    const history = (state.history || []).map(r =>
+      `run ${r.run}: ${String(r.status || '').toUpperCase()}  rate=${r.uart_rate}  buf=${r.buffer_size}  errors=${r.error_count}  id=${r.run_id}`
+    ).join('\n');
+    setText('history', history);
+  } catch (_) {
+    setText('overall_msg', 'Waiting for state...');
+  }
+}
+
+document.getElementById('start_btn').addEventListener('click', startRun);
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
+"""
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path == "/":
+            self._send_html(HTML)
+            return
+        if parsed.path == "/api/state":
+            self._send_json(self._read_state())
+            return
+        if parsed.path == "/api/process":
+            with LOCK:
+                running = PROCESS is not None and PROCESS.poll() is None
+            self._send_json({"running": running})
+            return
+        self.send_error(HTTPStatus.NOT_FOUND)
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/start":
+            self._handle_start()
+            return
+        self.send_error(HTTPStatus.NOT_FOUND)
+
+    def _handle_start(self) -> None:
+        content_len = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(content_len) if content_len else b"{}"
+        payload = json.loads(body.decode("utf-8") or "{}")
+
+        case = str(payload.get("case", "uart_demo"))
+        runs = int(payload.get("runs", 8))
+        mode = str(payload.get("mode", "mock"))
+
+        with LOCK:
+            global PROCESS
+            if PROCESS is not None and PROCESS.poll() is None:
+                self._send_json({"ok": False, "message": "Run already in progress."}, code=409)
+                return
+
+            cmd = [
+                "python3",
+                "orchestrator.py",
+                "--case",
+                case,
+                "--runs",
+                str(runs),
+                "--mode",
+                mode,
+                "--state-file",
+                str(STATE_PATH),
+            ]
+            PROCESS = subprocess.Popen(
+                cmd,
+                cwd=str(ROOT),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+
+        self._send_json({"ok": True, "message": f"Started {mode} run for case={case} runs={runs}."})
+
+    def _read_state(self) -> dict:
+        if not STATE_PATH.exists():
+            return {
+                "overall": {
+                    "status": "idle",
+                    "message": "No run yet. Click Start Run.",
+                    "case_id": "",
+                    "mode": "",
+                    "runs_total": 0,
+                    "current_run": 0,
+                    "updated_at": "",
+                },
+                "agents": {
+                    "planner": {"status": "idle", "task": "", "fragment": ""},
+                    "coder": {"status": "idle", "task": "", "fragment": ""},
+                    "critic": {"status": "idle", "task": "", "fragment": ""},
+                    "summarizer": {"status": "idle", "task": "", "fragment": ""},
+                },
+                "latest_uart": [],
+                "overall_output": "",
+                "history": [],
+            }
+        try:
+            return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {"overall": {"status": "error", "message": "Failed to parse state file."}}
+
+    def _send_html(self, html: str) -> None:
+        body = html.encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_json(self, obj: dict, code: int = 200) -> None:
+        body = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def main() -> None:
+    host = "127.0.0.1"
+    port = 8765
+    server = ThreadingHTTPServer((host, port), Handler)
+    print(f"Dashboard running at http://{host}:{port}")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
