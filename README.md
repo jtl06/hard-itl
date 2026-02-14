@@ -112,6 +112,22 @@ Dashboard includes:
 Use the Start Run controls in the UI to begin `mock` or `real` runs.
 If start fails, the UI now shows process/log tail from `dashboard/orchestrator.log`.
 
+Streaming API:
+- `GET /api/stream` (Server-Sent Events)
+- `POST /api/run` to start a run (same payload as previous start endpoint)
+
+## Live CLI flags
+
+- `--live-uart`: print UART lines as they are captured, prefixed with `[uart]`
+- `--trace`: print live agent reasoning summaries, prefixed with `[planner]`, `[critic]`, `[summarizer]`
+- `--verbose`: enables comprehensive live console output
+
+Example:
+
+```bash
+python3 orchestrator.py --case uart_demo --runs 8 --mode mock --live-uart --trace --verbose
+```
+
 Real mode example:
 
 ```bash

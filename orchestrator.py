@@ -60,6 +60,9 @@ def run_case(
     uart_tail_lines: int = 8,
     show_agent_fragments: bool = False,
     state_file: str = "",
+    live_uart: bool = False,
+    trace: bool = False,
+    verbose: bool = False,
 ) -> list[dict[str, Any]]:
     cfg = parse_config("config.yaml")
     nim_cfg = cfg.get("nim", {})
@@ -103,15 +106,32 @@ def run_case(
     rows: list[dict[str, Any]] = []
     for run_index in range(1, runs + 1):
         _set_overall(state, status="running", message=f"Running {run_index}/{runs}", current_run=run_index)
-        _set_agent(state, "planner", "running", f"Preparing run params: {params}")
-        _set_agent(state, "coder", "idle", "Waiting for runner evidence.")
-        _set_agent(state, "critic", "idle", "Waiting for runner evidence.")
-        _set_agent(state, "summarizer", "idle", "Waiting for fan-in.")
+        _set_agent(state, "planner", "running", _reasoning_summary(state, "planner", "running", "pre-run planning"))
+        _set_agent(state, "coder", "idle", _reasoning_summary(state, "coder", "idle", "waiting for evidence"))
+        _set_agent(state, "critic", "idle", _reasoning_summary(state, "critic", "idle", "waiting for evidence"))
+        _set_agent(state, "summarizer", "idle", _reasoning_summary(state, "summarizer", "idle", "waiting for fan-in"))
         if state_path is not None:
             _write_state(state_path, state)
-        if live:
+        if live or verbose:
             print(f"[run {run_index}/{runs}] start case={case_id} params={params}")
-        run_result = runner.execute(case_id=case_id, run_index=run_index, params=params, mode=mode)
+        uart_stream: list[str] = []
+
+        def _on_uart_line(line: str) -> None:
+            uart_stream.append(line)
+            state["latest_uart"] = uart_stream[-uart_tail_lines:]
+            if live_uart or verbose:
+                print(f"[uart] {line}")
+            if state_path is not None:
+                _write_state(state_path, state)
+
+        run_result = runner.execute(
+            case_id=case_id,
+            run_index=run_index,
+            params=params,
+            mode=mode,
+            uart_line_callback=_on_uart_line,
+            emulate_timing=(mode == "mock" and (state_path is not None or live_uart or verbose)),
+        )
         run_dir = Path(run_result["run_dir"])
 
         _set_agent(state, "planner", "done", "Run params fixed for this iteration.")
@@ -128,7 +148,14 @@ def run_case(
             run_result,
             analysis,
             triage,
-            status_updater=lambda role, s, msg: _nim_status_update(state, state_path, role, s, msg),
+            status_updater=lambda role, s, msg: _nim_status_update(
+                state,
+                state_path,
+                role,
+                s,
+                msg,
+                trace_to_stdout=(trace or verbose),
+            ),
         )
         nim_next_experiments = parse_next_experiments(nim_summary)
         state["overall_output"] = nim_summary
@@ -147,7 +174,7 @@ def run_case(
         _update_latest_uart(state, run_dir=run_dir, tail_lines=uart_tail_lines)
         if state_path is not None:
             _write_state(state_path, state)
-        if live:
+        if live or verbose:
             _print_live_run_details(
                 run_result=run_result,
                 run_dir=run_dir,
@@ -267,10 +294,40 @@ def _nim_status_update(
     role: str,
     status: str,
     message: str,
+    trace_to_stdout: bool = False,
 ) -> None:
-    _set_agent(state, role, status, message)
+    reasoning = _reasoning_summary(state=state, role=role, status=status, message=message)
+    _set_agent(state, role, status, reasoning)
+    if trace_to_stdout and role in {"planner", "critic", "summarizer"}:
+        print(f"[{role}] {reasoning}")
     if state_path is not None:
         _write_state(state_path, state)
+
+
+def _reasoning_summary(state: dict[str, Any], role: str, status: str, message: str) -> str:
+    metrics = state.get("last_analysis", {})
+    err = metrics.get("error_count", "n/a")
+    miss_end = metrics.get("missing_end", "n/a")
+    last_code = metrics.get("last_error_code") or "none"
+    evidence = f"errors={err}, missing_end={miss_end}, last_error={last_code}"
+
+    hypothesis_map = {
+        "planner": "parameter instability likely when UART is too aggressive",
+        "coder": "instrumentation gap may hide run boundary or error details",
+        "critic": "proposed change may violate runner-only hardware boundaries",
+        "summarizer": "best next step is smallest experiment that can confirm root cause",
+    }
+    next_map = {
+        "planner": "propose conservative uart_rate/buffer_size experiment",
+        "coder": "suggest minimal logging/marker patch only",
+        "critic": "flag feasibility/risk and request safer fallback",
+        "summarizer": "merge outputs into operator runbook",
+    }
+    hyp = hypothesis_map.get(role, "root cause under review")
+    nxt = next_map.get(role, "continue analysis")
+    if status in {"error", "disabled", "fallback"}:
+        hyp = message[:120] if message else hyp
+    return f"Evidence: {evidence} | Hypothesis: {hyp} | Next action: {nxt}"
 
 
 def _update_latest_uart(state: dict[str, Any], run_dir: Path, tail_lines: int) -> None:
@@ -346,6 +403,9 @@ def main() -> None:
         help="Print short planner/coder/critic response fragments in live mode",
     )
     parser.add_argument("--state-file", default="", help="Write live dashboard state JSON to this path")
+    parser.add_argument("--live-uart", action="store_true", help="Print UART lines live as they are captured")
+    parser.add_argument("--trace", action="store_true", help="Print live agent reasoning summaries")
+    parser.add_argument("--verbose", action="store_true", help="Enable all live CLI output")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -358,6 +418,9 @@ def main() -> None:
             uart_tail_lines=args.uart_tail_lines,
             show_agent_fragments=args.show_agent_fragments,
             state_file=args.state_file,
+            live_uart=args.live_uart,
+            trace=args.trace,
+            verbose=args.verbose,
         )
     except FlashError as exc:
         if args.state_file:

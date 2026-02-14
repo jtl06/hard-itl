@@ -5,7 +5,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from runner.flash import FlashError, Flasher
@@ -39,7 +39,15 @@ class Runner:
         flasher = Flasher(mock_mode=(mode == "mock"))
         return flasher.flash(image_path=image_path, method=method)
 
-    def execute(self, case_id: str, run_index: int, params: dict[str, Any], mode: str = "mock") -> dict[str, Any]:
+    def execute(
+        self,
+        case_id: str,
+        run_index: int,
+        params: dict[str, Any],
+        mode: str = "mock",
+        uart_line_callback: Callable[[str], None] | None = None,
+        emulate_timing: bool = False,
+    ) -> dict[str, Any]:
         run_id = self._new_run_id()
         run_dir = self.runs_root / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -81,6 +89,8 @@ class Runner:
             baud=self.config.serial_baud,
             timeout_s=self.config.serial_timeout_s,
             prefer_by_id=self.config.prefer_by_id,
+            line_callback=uart_line_callback,
+            emulate_timing=emulate_timing,
         )
         diagnostics.append(capture_note)
 

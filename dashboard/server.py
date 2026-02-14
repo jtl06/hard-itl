@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -166,7 +167,7 @@ async function startRun() {
     runs: Number(document.getElementById('runs').value || 8),
     mode: document.getElementById('mode').value,
   };
-  const res = await fetch('/api/start', {
+  const res = await fetch('/api/run', {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
   });
   const data = await res.json().catch(() => ({ok:false, message: 'Failed to parse start response'}));
@@ -191,49 +192,68 @@ function applyAgentStatus(id, status) {
   el.style.color = status === 'done' ? 'var(--ok)' : status === 'running' ? 'var(--run)' : status === 'error' ? 'var(--err)' : 'var(--muted)';
 }
 
-async function refresh() {
+function renderStateBundle(bundle) {
+  const state = bundle.state || {};
+  const p = bundle.process || {};
+  const o = state.overall || {};
+
+  setText('overall_status', o.status || 'idle');
+  applyStatusClass('overall_status', o.status || 'idle');
+  setText('overall_progress', `${o.current_run || 0}/${o.runs_total || 0}`);
+  setText('overall_msg', o.message || '');
+  const total = Number(o.runs_total || 0);
+  const cur = Number(o.current_run || 0);
+  const pct = total > 0 ? Math.max(0, Math.min(100, (cur / total) * 100)) : 0;
+  document.getElementById('progress_bar').style.width = `${pct}%`;
+
+  for (const name of ['planner','coder','critic','summarizer']) {
+    const a = (state.agents || {})[name] || {};
+    applyAgentStatus(`${name}_status`, a.status || 'idle');
+    setText(`${name}_task`, a.task || 'Waiting for run.');
+    setText(`${name}_fragment`, a.fragment || 'No fragment yet.');
+  }
+
+  setText('overall_output', state.overall_output || 'No output yet. Start a run to populate summarizer output.');
+  setText('latest_uart', (state.latest_uart || []).join('\\n') || 'No UART lines yet.');
+  const history = (state.history || []).map(r =>
+    `run ${r.run}: ${String(r.status || '').toUpperCase()}  rate=${r.uart_rate}  buf=${r.buffer_size}  errors=${r.error_count}  id=${r.run_id}`
+  ).join('\\n');
+  setText('history', history || 'No runs yet.');
+
+  const procMsg = p.running
+    ? `process: running (pid=${p.pid || 'n/a'})`
+    : `process: idle` + (p.exit_code !== null && p.exit_code !== undefined ? ` (last exit=${p.exit_code})` : '');
+  const logMsg = (p.log_tail || []).join('\\n');
+  setText('proc_info', procMsg + (logMsg ? '\\n' + logMsg : ''));
+}
+
+async function refreshOnce() {
   try {
     const res = await fetch('/api/state');
     const state = await res.json();
     const p = await (await fetch('/api/process')).json();
-    const o = state.overall || {};
-
-    setText('overall_status', o.status || 'idle');
-    applyStatusClass('overall_status', o.status || 'idle');
-    setText('overall_progress', `${o.current_run || 0}/${o.runs_total || 0}`);
-    setText('overall_msg', o.message || '');
-    const total = Number(o.runs_total || 0);
-    const cur = Number(o.current_run || 0);
-    const pct = total > 0 ? Math.max(0, Math.min(100, (cur / total) * 100)) : 0;
-    document.getElementById('progress_bar').style.width = `${pct}%`;
-
-    for (const name of ['planner','coder','critic','summarizer']) {
-      const a = (state.agents || {})[name] || {};
-      applyAgentStatus(`${name}_status`, a.status || 'idle');
-      setText(`${name}_task`, a.task || 'Waiting for run.');
-      setText(`${name}_fragment`, a.fragment || 'No fragment yet.');
-    }
-
-    setText('overall_output', state.overall_output || 'No output yet. Start a run to populate summarizer output.');
-    setText('latest_uart', (state.latest_uart || []).join('\n') || 'No UART lines yet.');
-    const history = (state.history || []).map(r =>
-      `run ${r.run}: ${String(r.status || '').toUpperCase()}  rate=${r.uart_rate}  buf=${r.buffer_size}  errors=${r.error_count}  id=${r.run_id}`
-    ).join('\n');
-    setText('history', history || 'No runs yet.');
-
-    const procMsg = p.running
-      ? `process: running (pid=${p.pid || 'n/a'})`
-      : `process: idle` + (p.exit_code !== null && p.exit_code !== undefined ? ` (last exit=${p.exit_code})` : '');
-    const logMsg = (p.log_tail || []).join('\n');
-    setText('proc_info', procMsg + (logMsg ? '\n' + logMsg : ''));
+    renderStateBundle({state, process: p});
   } catch (_) {
     setText('overall_msg', 'Waiting for state...');
   }
 }
 
+function initSSE() {
+  const es = new EventSource('/api/stream');
+  es.onmessage = (ev) => {
+    try {
+      const bundle = JSON.parse(ev.data);
+      renderStateBundle(bundle);
+    } catch (_) {}
+  };
+  es.onerror = () => {
+    setText('overall_msg', 'SSE disconnected, retrying...');
+  };
+}
+
 document.getElementById('start_btn').addEventListener('click', startRun);
-refresh();
-setInterval(refresh, 1000);
+refreshOnce();
+initSSE();
 </script>
 </body>
 </html>
@@ -256,11 +276,14 @@ class Handler(BaseHTTPRequestHandler):
                 exit_code = None if running or PROCESS is None else PROCESS.poll()
             self._send_json({"running": running, "pid": pid, "exit_code": exit_code, "log_tail": self._read_log_tail()})
             return
+        if parsed.path == "/api/stream":
+            self._send_sse_stream()
+            return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        if parsed.path == "/api/start":
+        if parsed.path in {"/api/start", "/api/run"}:
             self._handle_start()
             return
         self.send_error(HTTPStatus.NOT_FOUND)
@@ -315,6 +338,8 @@ class Handler(BaseHTTPRequestHandler):
                 mode,
                 "--state-file",
                 str(STATE_PATH),
+                "--live-uart",
+                "--trace",
             ]
             logf = LOG_PATH.open("a", encoding="utf-8")
             PROCESS = subprocess.Popen(
@@ -326,6 +351,32 @@ class Handler(BaseHTTPRequestHandler):
             )
 
         self._send_json({"ok": True, "message": f"Started {mode} run for case={case} runs={runs}."})
+
+    def _send_sse_stream(self) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        last_payload = ""
+        try:
+            while True:
+                bundle = {
+                    "state": self._read_state(),
+                    "process": self._read_process(),
+                }
+                payload = json.dumps(bundle)
+                if payload != last_payload:
+                    self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                    last_payload = payload
+                else:
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
+                time.sleep(0.5)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def _read_state(self) -> dict:
         if not STATE_PATH.exists():
@@ -359,6 +410,13 @@ class Handler(BaseHTTPRequestHandler):
             return []
         lines = LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
         return lines[-max_lines:]
+
+    def _read_process(self) -> dict:
+        with LOCK:
+            running = PROCESS is not None and PROCESS.poll() is None
+            pid = PROCESS.pid if PROCESS is not None else None
+            exit_code = None if running or PROCESS is None else PROCESS.poll()
+        return {"running": running, "pid": pid, "exit_code": exit_code, "log_tail": self._read_log_tail()}
 
     def _send_html(self, html: str) -> None:
         body = html.encode("utf-8")
