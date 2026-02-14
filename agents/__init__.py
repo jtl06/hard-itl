@@ -1,7 +1,7 @@
-"""Agents package for post-run diagnosis."""
+"""Agent package."""
 
-from .planner import PlannerAgent
-from .analyst import AnalystAgent
-from .triage import TriageAgent
+from agents.analyst import AnalystAgent
+from agents.planner import PlannerAgent
+from agents.triage import TriageAgent
 
-__all__ = ["PlannerAgent", "AnalystAgent", "TriageAgent"]
+__all__ = ["AnalystAgent", "PlannerAgent", "TriageAgent"]

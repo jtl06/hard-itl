@@ -1,60 +1,84 @@
-# Multi-Agent HIL Debugger (Pi UART)
+# Multi-agent HIL debugger (RP2350 + Saleae + local NIM)
 
-Implements a local, no-cloud multi-agent flow for UART HIL debugging using run artifact bundles.
+This repository implements a local-only multi-agent HIL pipeline with a strict boundary: only `runner/` touches hardware-facing operations.
 
-## What this delivers
+## What works now
 
-- `runner/`: executes tests (mock or real over SSH) and captures UART logs.
-- `agents/`: `planner`, `analyst`, `triage` consume each run bundle.
-- `runs/run_x/`: evidence bundles with `manifest.json`, `uart.log`, `summary.md`, `triage.json`.
-- `make demo`: deterministic flow `fail -> diagnose -> tweak param -> pass`.
+- End-to-end orchestrator:
+  - `python orchestrator.py --case uart_demo --runs 8`
+- Convenience target:
+  - `make demo`
+- Deterministic mock mode (default) so pipeline works without hardware.
+- Per-run artifact bundles under `runs/run_<timestamp>_<shortid>/`.
 
-## Constraints mapping
+## Assumptions / defaults
 
-- Runner is the only hardware-touching module: SSH and UART capture exist only in `runner/runner.py`.
-- No cloud dependencies: LLM calls target local NIM endpoint (`NIM_BASE_URL`), with deterministic local fallback when unavailable.
-- Everything runnable from one command: `make demo`.
+- Default mode is `mock`.
+- Local LLM endpoint is OpenAI-compatible NIM:
+  - `NIM_BASE_URL=http://127.0.0.1:8000/v1`
+  - `NIM_MODEL=meta/llama-3.1-8b-instruct`
+- If LLM is unavailable, agents use deterministic fallback logic.
+- Synthetic failure model:
+  - fail when `uart_rate > 230400` or `buffer_size < 64`
+  - pass when `uart_rate <= 230400` and `buffer_size >= 64`
 
-## Quick start (venv)
+## Repo structure
+
+- `orchestrator.py`: coordinates planner -> runner -> analyst -> triage loop.
+- `runner/`: only hardware-touching module.
+  - `runner.py`: run lifecycle, manifest, firmware placeholders.
+  - `flash.py`: UF2/picotool/openocd backends with `method="auto"`.
+  - `serial_capture.py`: UART capture + mock UART simulation.
+  - `saleae_capture.py`: Saleae export handling (mock export included).
+- `agents/`:
+  - `planner.py`, `analyst.py`, `triage.py`, `llm_client.py`.
+- `schemas/types.py`: data models for requests/results.
+- `config.yaml`: runner, Saleae, case defaults.
+
+## Install / run
 
 ```bash
+make venv
 make demo
 ```
 
-This creates `.venv`, installs deps, runs demo, and writes artifacts under `runs/`.
-
-## Optional: use real Pi SSH run
+Equivalent direct run:
 
 ```bash
-.venv/bin/python -m runner.cli \
-  --run-id run_003 \
-  --baud-rate 115200 \
-  --mode real \
-  --ssh-host <PI_HOST> \
-  --ssh-user pi \
-  --remote-cmd "python3 /opt/hil/run_uart_test.py"
+PYTHONPATH=. .venv/bin/python orchestrator.py --case uart_demo --runs 8
 ```
 
-## Local NIM endpoint config
+## Output artifacts per run
 
-Defaults:
-- `NIM_BASE_URL=http://localhost:8000/v1`
-- `NIM_MODEL=meta/llama-3.1-8b-instruct`
+Each run directory contains:
 
-If your DGX host differs:
+- `manifest.json` (run_id, case_id, params, git_sha, flash method, serial, Saleae summary)
+- `firmware/firmware.elf`, `firmware/firmware.uf2`
+- `uart.log` (timestamped lines with `RUN_START`, `ERROR`, `RUN_END`)
+- `la/digital.csv`, `la/uart_decoded.csv` (mock or real capture output)
+- `analysis.json` (pass_fail, metrics, key_events)
+- `triage.md` (hypotheses, evidence references, next experiments, suggested fix)
 
-```bash
-export DGX_HOST=<DGX_HOST>
-export NIM_BASE_URL=http://$DGX_HOST:8000/v1
-```
+## Flash backend setup (real mode)
 
-## Evidence bundle format
+Runner auto-detect order:
+1. UF2 mass-storage mount (`RPI-RP2`/`PICO2` style volume)
+2. `picotool` if installed
+3. `openocd` if installed (`OPENOCD_CFG` required)
 
-Each `runs/run_x/` directory contains:
-- `manifest.json`
-- `uart.log`
-- `summary.md`
-- `triage.json`
+If none are available, runner fails fast with actionable diagnostics.
 
-Stretch support scaffold:
-- `la_uart.csv` can be dropped into run folders later for LA ingestion enhancements.
+## Saleae automation notes
+
+- This baseline includes mock Saleae exports by default.
+- For real capture, extend `runner/saleae_capture.py` with `logic2-automation` integration and ensure Logic 2 automation is enabled (default port `10430`).
+- If running headless, use Xvfb when launching Logic 2.
+
+## Wiring notes (for real hardware)
+
+- CH0: `TRIG` high at `RUN_START`, low at `RUN_END`.
+- CH1: `ERR` pulse on error.
+- UART output should emit:
+  - `RUN_START <run_id>`
+  - `ERROR <code> <msg>`
+  - `RUN_END <run_id>`

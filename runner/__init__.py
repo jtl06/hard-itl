@@ -1,5 +1,5 @@
-"""Runner package for HIL execution."""
+"""Runner package."""
 
-from .runner import Runner, RunConfig
+from runner.runner import Runner, RunnerConfig
 
-__all__ = ["Runner", "RunConfig"]
+__all__ = ["Runner", "RunnerConfig"]

@@ -10,10 +10,10 @@ venv:
 	$(PIP) install -r requirements.txt
 
 install: venv
-	@echo "Local environment ready."
+	@echo "Environment ready"
 
 demo: install
-	PYTHONPATH=. $(PY) scripts/demo.py
+	PYTHONPATH=. $(PY) orchestrator.py --case uart_demo --runs 8 --mode mock
 
 clean:
 	rm -rf $(VENV)

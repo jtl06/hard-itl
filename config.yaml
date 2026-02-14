@@ -1,0 +1,16 @@
+runner:
+  flash_method: auto
+  serial_port: /dev/ttyACM0
+  serial_baud: 115200
+
+saleae:
+  trigger_channel: 0
+  err_channel: 1
+
+paths:
+  runs_root: runs
+
+cases:
+  uart_demo:
+    initial_uart_rate: 1000000
+    initial_buffer_size: 16
