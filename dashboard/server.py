@@ -137,10 +137,34 @@ HTML = """<!doctype html>
     </section>
 
     <section class=\"grid\">
-      <article class=\"card\"><h3>Planner</h3><div id=\"planner_status\" class=\"agent-status\"></div><div id=\"planner_task\" class=\"meta\"></div><pre id=\"planner_fragment\"></pre></article>
-      <article class=\"card\"><h3>Coder</h3><div id=\"coder_status\" class=\"agent-status\"></div><div id=\"coder_task\" class=\"meta\"></div><pre id=\"coder_fragment\"></pre></article>
-      <article class=\"card\"><h3>Critic</h3><div id=\"critic_status\" class=\"agent-status\"></div><div id=\"critic_task\" class=\"meta\"></div><pre id=\"critic_fragment\"></pre></article>
-      <article class=\"card\"><h3>Summarizer</h3><div id=\"summarizer_status\" class=\"agent-status\"></div><div id=\"summarizer_task\" class=\"meta\"></div><pre id=\"summarizer_fragment\"></pre></article>
+      <article class=\"card\">
+        <h3>Planner</h3>
+        <div class=\"meta\">Plans next run params from current evidence.</div>
+        <div id=\"planner_status\" class=\"agent-status\">idle</div>
+        <div id=\"planner_task\" class=\"meta\">Waiting for run.</div>
+        <pre id=\"planner_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
+      </article>
+      <article class=\"card\">
+        <h3>Coder</h3>
+        <div class=\"meta\">Suggests minimal instrumentation/fix ideas.</div>
+        <div id=\"coder_status\" class=\"agent-status\">idle</div>
+        <div id=\"coder_task\" class=\"meta\">Waiting for run.</div>
+        <pre id=\"coder_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
+      </article>
+      <article class=\"card\">
+        <h3>Debugger</h3>
+        <div class=\"meta\">(was Critic) checks feasibility and risks.</div>
+        <div id=\"critic_status\" class=\"agent-status\">idle</div>
+        <div id=\"critic_task\" class=\"meta\">Waiting for run.</div>
+        <pre id=\"critic_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
+      </article>
+      <article class=\"card\">
+        <h3>Coordinator</h3>
+        <div class=\"meta\">(was Summarizer) merges outputs into one runbook.</div>
+        <div id=\"summarizer_status\" class=\"agent-status\">idle</div>
+        <div id=\"summarizer_task\" class=\"meta\">Waiting for run.</div>
+        <pre id=\"summarizer_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
+      </article>
     </section>
 
     <section class=\"layout-bottom\">
@@ -218,8 +242,8 @@ function renderStateBundle(bundle) {
   for (const name of ['planner','coder','critic','summarizer']) {
     const a = (state.agents || {})[name] || {};
     applyAgentStatus(`${name}_status`, a.status || 'idle');
-    setText(`${name}_task`, a.task || 'Waiting for run.');
-    setText(`${name}_fragment`, a.fragment || 'No fragment yet.');
+      setText(`${name}_task`, a.task || 'Waiting for run.');
+      setText(`${name}_fragment`, a.fragment || 'Evidence -> Hypothesis -> Next action will appear here.');
   }
 
   setText('overall_output', state.overall_output || 'No output yet. Start a run to populate summarizer output.');
