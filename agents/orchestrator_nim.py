@@ -25,9 +25,15 @@ class NIMOrchestrator:
         self.chat_url = os.getenv("NIM_CHAT_URL", "http://localhost:8000/v1/chat/completions")
         self.model = os.getenv("NIM_MODEL", "nvidia/nemotron-nano-9b-v2")
         self.timeout_s = float(os.getenv("NIM_TIMEOUT_S", "3.0"))
+        self.last_fanout: list[AgentOutput] = []
 
     async def run(self, user_prompt: str) -> str:
         if aiohttp is None:
+            self.last_fanout = [
+                AgentOutput("planner", "Fallback: run uart_rate=230400,buffer_size=64 then 115200/128."),
+                AgentOutput("coder", "Fallback: ensure timestamped UART lines and explicit ERROR codes."),
+                AgentOutput("critic", "Fallback: keep hardware access constrained to runner module."),
+            ]
             return self._fallback_summary("aiohttp missing", user_prompt)
 
         planner_prompt = (
@@ -61,6 +67,7 @@ class NIMOrchestrator:
                     normalized.append(AgentOutput(role=role, text=f"{role} unavailable: {item}"))
                 else:
                     normalized.append(item)
+            self.last_fanout = normalized
 
             merged_input = "\n\n".join([f"[{x.role}]\n{x.text}" for x in normalized])
             summary = await self._call_agent(session, "summarizer", summarizer_prompt, merged_input)

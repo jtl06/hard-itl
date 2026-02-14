@@ -18,6 +18,9 @@ demo: install
 nim-smoke: install
 	tools/smoke_concurrency.sh
 
+demo-live: install
+	PYTHONPATH=. $(PY) orchestrator.py --case uart_demo --runs 8 --mode mock --live --show-agent-fragments
+
 clean:
 	rm -rf $(VENV)
 	rm -rf runs/run_*

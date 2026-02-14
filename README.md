@@ -5,6 +5,7 @@ Local-only multi-agent HIL pipeline with a strict boundary: only `runner/` may t
 ## Entry points
 
 - `make demo`
+- `make demo-live`
 - `python3 orchestrator.py --case uart_demo --runs 8`
 
 ## Truth layer and artifacts
@@ -76,6 +77,18 @@ tools/smoke_concurrency.sh
 ```bash
 make venv
 make demo
+```
+
+Live operator view (continuous diagnostics + UART tail + agent fragments):
+
+```bash
+make demo-live
+```
+
+Equivalent direct command:
+
+```bash
+python3 orchestrator.py --case uart_demo --runs 8 --mode mock --live --show-agent-fragments
 ```
 
 Real mode example:

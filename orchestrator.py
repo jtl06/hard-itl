@@ -50,7 +50,14 @@ def parse_config(path: str = "config.yaml") -> dict[str, Any]:
     return data
 
 
-def run_case(case_id: str, runs: int, mode: str) -> list[dict[str, Any]]:
+def run_case(
+    case_id: str,
+    runs: int,
+    mode: str,
+    live: bool = False,
+    uart_tail_lines: int = 8,
+    show_agent_fragments: bool = False,
+) -> list[dict[str, Any]]:
     cfg = parse_config("config.yaml")
     nim_cfg = cfg.get("nim", {})
     nim_enabled = bool(nim_cfg.get("enabled", True))
@@ -83,6 +90,8 @@ def run_case(case_id: str, runs: int, mode: str) -> list[dict[str, Any]]:
 
     rows: list[dict[str, Any]] = []
     for run_index in range(1, runs + 1):
+        if live:
+            print(f"[run {run_index}/{runs}] start case={case_id} params={params}")
         run_result = runner.execute(case_id=case_id, run_index=run_index, params=params, mode=mode)
         run_dir = Path(run_result["run_dir"])
 
@@ -90,6 +99,15 @@ def run_case(case_id: str, runs: int, mode: str) -> list[dict[str, Any]]:
         triage = triage_agent.triage(run_dir, analysis=analysis, params=params)
         nim_summary = _nim_guidance(nim_orchestrator, case_id, run_result, analysis, triage)
         nim_next_experiments = parse_next_experiments(nim_summary)
+        if live:
+            _print_live_run_details(
+                run_result=run_result,
+                run_dir=run_dir,
+                analysis=analysis,
+                uart_tail_lines=uart_tail_lines,
+                nim_orchestrator=nim_orchestrator,
+                show_agent_fragments=show_agent_fragments,
+            )
 
         row = {
             "run": run_index,
@@ -135,6 +153,47 @@ def _nim_guidance(
         return nim_orchestrator._fallback_summary(str(exc), prompt)
 
 
+def _print_live_run_details(
+    run_result: dict[str, Any],
+    run_dir: Path,
+    analysis: Any,
+    uart_tail_lines: int,
+    nim_orchestrator: NIMOrchestrator | None,
+    show_agent_fragments: bool,
+) -> None:
+    print(f"  run_id={run_result['run_id']} status={analysis.pass_fail} flash={run_result['flash_method']}")
+    for note in run_result.get("diagnostics", []):
+        print(f"  diag: {note}")
+
+    uart_path = run_dir / "uart.log"
+    if uart_path.exists():
+        lines = [ln.rstrip("\n") for ln in uart_path.read_text(encoding="utf-8").splitlines()]
+        print(f"  uart.log tail ({min(uart_tail_lines, len(lines))} lines):")
+        for ln in lines[-uart_tail_lines:]:
+            print(f"    {ln}")
+    else:
+        print("  uart.log not found")
+
+    metrics = analysis.metrics
+    print(
+        "  analysis:"
+        f" errors={metrics.get('error_count')}"
+        f" missing_start={metrics.get('missing_start')}"
+        f" missing_end={metrics.get('missing_end')}"
+        f" lps={metrics.get('lines_per_sec')}"
+        f" max_gap_ms={metrics.get('max_gap_ms')}"
+        f" last_error={metrics.get('last_error_code') or 'none'}"
+    )
+
+    if show_agent_fragments and nim_orchestrator is not None and nim_orchestrator.last_fanout:
+        print("  agent fragments:")
+        for item in nim_orchestrator.last_fanout:
+            frag = " ".join(item.text.split())
+            if len(frag) > 180:
+                frag = frag[:177] + "..."
+            print(f"    {item.role}: {frag}")
+
+
 def print_summary(rows: list[dict[str, Any]]) -> None:
     print("run | status | uart_rate | buffer_size | errors | run_id")
     print("-" * 72)
@@ -150,10 +209,24 @@ def main() -> None:
     parser.add_argument("--case", default="uart_demo")
     parser.add_argument("--runs", type=int, default=8)
     parser.add_argument("--mode", choices=["mock", "real"], default="mock")
+    parser.add_argument("--live", action="store_true", help="Print per-run diagnostics and UART log tail")
+    parser.add_argument("--uart-tail-lines", type=int, default=8, help="Number of UART lines to print in live mode")
+    parser.add_argument(
+        "--show-agent-fragments",
+        action="store_true",
+        help="Print short planner/coder/critic response fragments in live mode",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    rows = run_case(case_id=args.case, runs=args.runs, mode=args.mode)
+    rows = run_case(
+        case_id=args.case,
+        runs=args.runs,
+        mode=args.mode,
+        live=args.live,
+        uart_tail_lines=args.uart_tail_lines,
+        show_agent_fragments=args.show_agent_fragments,
+    )
     if args.json:
         print(json.dumps(rows, indent=2))
     else:
