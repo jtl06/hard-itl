@@ -1,0 +1,14 @@
+{
+  "name": "hil-multi-agent-debugger",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "postCreateCommand": "make install",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/workspace/.venv/bin/python"
+      }
+    }
+  }
+}
