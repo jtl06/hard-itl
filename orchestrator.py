@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from agents import AnalystAgent, PlannerAgent, TriageAgent
+from agents.orchestrator_nim import NIMOrchestrator, parse_next_experiments
 from runner import Runner, RunnerConfig
 
 
 def parse_config(path: str = "config.yaml") -> dict[str, Any]:
-    """Tiny YAML subset parser for this repo's config shape (no third-party deps)."""
     data: dict[str, Any] = {}
     section_stack: list[tuple[int, dict[str, Any]]] = [(-1, data)]
 
@@ -50,18 +52,26 @@ def parse_config(path: str = "config.yaml") -> dict[str, Any]:
 
 def run_case(case_id: str, runs: int, mode: str) -> list[dict[str, Any]]:
     cfg = parse_config("config.yaml")
+    nim_cfg = cfg.get("nim", {})
+    nim_enabled = bool(nim_cfg.get("enabled", True))
+    os.environ.setdefault("NIM_CHAT_URL", str(nim_cfg.get("chat_url", "http://localhost:8000/v1/chat/completions")))
+    os.environ.setdefault("NIM_MODEL", str(nim_cfg.get("model", "nvidia/nemotron-nano-9b-v2")))
+
     runner_cfg = RunnerConfig(
         runs_root=str(cfg.get("paths", {}).get("runs_root", "runs")),
         flash_method=str(cfg.get("runner", {}).get("flash_method", "auto")),
-        serial_port=str(cfg.get("runner", {}).get("serial_port", "/dev/ttyACM0")),
+        serial_port=str(cfg.get("runner", {}).get("serial_port", "")),
         serial_baud=int(cfg.get("runner", {}).get("serial_baud", 115200)),
-        trigger_channel=int(cfg.get("saleae", {}).get("trigger_channel", 0)),
+        serial_timeout_s=float(cfg.get("runner", {}).get("serial_timeout_s", 8.0)),
+        reenumeration_timeout_s=float(cfg.get("runner", {}).get("reenumeration_timeout_s", 8.0)),
+        prefer_by_id=bool(cfg.get("runner", {}).get("prefer_by_id", True)),
     )
 
     runner = Runner(runner_cfg)
     planner = PlannerAgent()
     analyst = AnalystAgent()
     triage_agent = TriageAgent()
+    nim_orchestrator = NIMOrchestrator() if nim_enabled else None
 
     case_cfg = cfg.get("cases", {}).get(case_id, {})
     params = {
@@ -78,6 +88,8 @@ def run_case(case_id: str, runs: int, mode: str) -> list[dict[str, Any]]:
 
         analysis = analyst.analyze(run_dir)
         triage = triage_agent.triage(run_dir, analysis=analysis, params=params)
+        nim_summary = _nim_guidance(nim_orchestrator, case_id, run_result, analysis, triage)
+        nim_next_experiments = parse_next_experiments(nim_summary)
 
         row = {
             "run": run_index,
@@ -89,9 +101,38 @@ def run_case(case_id: str, runs: int, mode: str) -> list[dict[str, Any]]:
             "run_dir": run_result["run_dir"],
         }
         rows.append(row)
-        params = planner.next_request(params, analysis=analysis, triage=triage)
+
+        if analysis.pass_fail != "pass" and nim_next_experiments:
+            params = nim_next_experiments[0]
+        else:
+            params = planner.next_request(params, analysis=analysis, triage=triage)
 
     return rows
+
+
+def _nim_guidance(
+    nim_orchestrator: NIMOrchestrator | None,
+    case_id: str,
+    run_result: dict[str, Any],
+    analysis: Any,
+    triage: Any,
+) -> str:
+    if nim_orchestrator is None:
+        return "NIM orchestration disabled via config."
+
+    prompt = (
+        "Project context: RP2350 DUT with USB CDC UART as the only truth layer; "
+        "runner is the only hardware-touching module. "
+        f"case={case_id} run_id={run_result['run_id']} status={analysis.pass_fail} run_dir={run_result['run_dir']} "
+        "Evidence files: uart.log, analysis.json, triage.md. "
+        f"metrics={analysis.metrics} key_events={analysis.key_events} "
+        f"triage_next_experiments={triage.next_experiments} triage_fix={triage.suggested_fix}. "
+        "Generate next experiments, minimal instrumentation suggestions, risk review, and merged demo guidance."
+    )
+    try:
+        return asyncio.run(nim_orchestrator.run(prompt))
+    except Exception as exc:
+        return nim_orchestrator._fallback_summary(str(exc), prompt)
 
 
 def print_summary(rows: list[dict[str, Any]]) -> None:

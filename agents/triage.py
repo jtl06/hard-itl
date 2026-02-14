@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from schemas.types import AnalysisResult, TriageResult
 from agents.llm_client import LLMClient
+from schemas.types import AnalysisResult, TriageResult
 
 
 class TriageAgent:
@@ -17,10 +17,10 @@ class TriageAgent:
 
         llm_text = self.llm.chat(
             user_prompt=(
-                "Given this analysis, write concise hypotheses and next experiments:\n"
+                "Given this UART-only analysis, provide concise hypotheses and next experiments:\n"
                 f"metrics={analysis.metrics}\nkey_events={analysis.key_events}\nparams={params}"
             ),
-            system_prompt="You are a HIL triage agent. Keep it concrete.",
+            system_prompt="You are a HIL triage agent. Keep it concrete and evidence-driven.",
         )
         if llm_text:
             suggested_fix = llm_text.splitlines()[0][:220]
@@ -38,16 +38,17 @@ class TriageAgent:
     @staticmethod
     def _fallback_hypotheses(analysis: AnalysisResult) -> list[str]:
         if analysis.pass_fail == "pass":
-            return ["No blocking issue observed; parameters are in a stable region."]
+            return ["No blocking issue observed; UART evidence indicates stable execution."]
+
         hypotheses = []
         if analysis.metrics.get("error_count", 0) > 0:
-            hypotheses.append(
-                "UART instability likely from aggressive settings (see analysis.json metrics.error_count and key_events)."
-            )
+            hypotheses.append("UART instability likely from aggressive configuration (see analysis.json error_count).")
+        if analysis.metrics.get("missing_start"):
+            hypotheses.append("Run marker missing: RUN_START not observed in uart.log.")
         if analysis.metrics.get("missing_end"):
-            hypotheses.append("Run did not terminate cleanly (analysis.json metrics.missing_end=true).")
+            hypotheses.append("Run marker missing: RUN_END not observed in uart.log.")
         if not hypotheses:
-            hypotheses.append("Root cause unclear; gather additional LA traces from la/uart_decoded.csv.")
+            hypotheses.append("Root cause unclear; collect additional UART runs with same params.")
         return hypotheses
 
     @staticmethod
@@ -58,26 +59,23 @@ class TriageAgent:
         uart_rate = int(params.get("uart_rate", 1000000))
         buffer_size = int(params.get("buffer_size", 16))
 
-        candidates = [
+        return [
             {"uart_rate": max(230400, uart_rate // 2), "buffer_size": max(64, buffer_size * 2)},
             {"uart_rate": 230400, "buffer_size": max(64, buffer_size)},
             {"uart_rate": 115200, "buffer_size": 128},
         ]
-        return candidates
 
     @staticmethod
     def _render_markdown(result: TriageResult, analysis: AnalysisResult) -> str:
-        lines = [
-            "# Triage",
-            "",
-            "## Hypotheses",
-        ]
+        lines = ["# Triage", "", "## Hypotheses"]
         for item in result.hypotheses:
             lines.append(f"- {item}")
-        lines.extend(["", "## Evidence", "- `analysis.json` metrics and key_events", "- `uart.log` parsed events"])
+
+        lines.extend(["", "## Evidence", "- `analysis.json` metrics and key_events", "- `uart.log` markers/events"])
         lines.extend(["", "## Next Experiments"])
         for exp in result.next_experiments:
             lines.append(f"- {exp}")
+
         lines.extend(["", "## Suggested Fix", f"- {result.suggested_fix}"])
         lines.extend(["", "## Pass/Fail", f"- {analysis.pass_fail}"])
         return "\n".join(lines) + "\n"

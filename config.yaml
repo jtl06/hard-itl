@@ -1,14 +1,18 @@
 runner:
   flash_method: auto
-  serial_port: /dev/ttyACM0
+  serial_port: ""
   serial_baud: 115200
-
-saleae:
-  trigger_channel: 0
-  err_channel: 1
+  serial_timeout_s: 8
+  reenumeration_timeout_s: 8
+  prefer_by_id: true
 
 paths:
   runs_root: runs
+
+nim:
+  enabled: true
+  chat_url: http://localhost:8000/v1/chat/completions
+  model: nvidia/nemotron-nano-9b-v2
 
 cases:
   uart_demo:

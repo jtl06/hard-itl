@@ -8,22 +8,23 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from runner.flash import Flasher, FlashError
-from runner.serial_capture import capture_uart
-from runner.saleae_capture import capture_saleae
+from runner.flash import FlashError, Flasher
+from runner.serial_capture import capture_uart, wait_for_serial_port
 
 
 @dataclass
 class RunnerConfig:
     runs_root: str = "runs"
     flash_method: str = "auto"
-    serial_port: str = "/dev/ttyACM0"
+    serial_port: str = ""
     serial_baud: int = 115200
-    trigger_channel: int = 0
+    serial_timeout_s: float = 8.0
+    reenumeration_timeout_s: float = 8.0
+    prefer_by_id: bool = True
 
 
 class Runner:
-    """Hardware boundary: all build/flash/serial/LA interactions are centralized here."""
+    """Hardware boundary: all build/flash/serial interactions are centralized here."""
 
     def __init__(self, config: RunnerConfig | None = None) -> None:
         self.config = config or RunnerConfig()
@@ -52,25 +53,32 @@ class Runner:
             flash_method = "none"
             diagnostics.append(str(exc))
 
-        uart_lines, uart_pass, capture_note = capture_uart(
+        serial_port = self.config.serial_port
+        if mode != "mock":
+            serial_port = wait_for_serial_port(
+                previous_port=serial_port or None,
+                timeout_s=self.config.reenumeration_timeout_s,
+                prefer_by_id=self.config.prefer_by_id,
+            ) or ""
+            diagnostics.append(
+                f"serial re-enumeration selected port={serial_port or 'none'} within {self.config.reenumeration_timeout_s}s"
+            )
+
+        uart_lines, uart_pass, capture_note, detected_port = capture_uart(
             run_id=run_id,
             params=params,
             mode=mode,
-            serial_port=self.config.serial_port,
+            serial_port=serial_port,
             baud=self.config.serial_baud,
+            timeout_s=self.config.serial_timeout_s,
+            prefer_by_id=self.config.prefer_by_id,
         )
         diagnostics.append(capture_note)
 
         uart_path = run_dir / "uart.log"
         uart_path.write_text("\n".join(uart_lines) + "\n", encoding="utf-8")
 
-        saleae_summary = capture_saleae(
-            run_dir=run_dir,
-            mode=mode,
-            trigger_channel=self.config.trigger_channel,
-            uart_lines=uart_lines,
-        )
-
+        resolved_port = detected_port or serial_port or self.config.serial_port or "auto"
         status = "pass" if flash_ok and uart_pass else "fail"
         manifest = {
             "run_id": run_id,
@@ -80,17 +88,16 @@ class Runner:
             "git_sha": self._git_sha(),
             "timestamps": {"created_utc": datetime.now(timezone.utc).isoformat()},
             "flash_method": flash_method,
-            "serial_port": self.config.serial_port,
-            "saleae_config_summary": saleae_summary,
+            "serial_port": resolved_port,
             "status": status,
             "artifacts": {
                 "firmware_elf": str(elf_path),
                 "firmware_uf2": str(uf2_path),
                 "uart_log": str(uart_path),
-                "la_dir": str(run_dir / "la"),
                 "analysis": str(run_dir / "analysis.json"),
                 "triage": str(run_dir / "triage.md"),
             },
+            "diagnostics": diagnostics,
         }
         (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -100,6 +107,7 @@ class Runner:
             "status": status,
             "params": params,
             "flash_method": flash_method,
+            "serial_port": resolved_port,
             "diagnostics": diagnostics,
         }
 

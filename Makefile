@@ -3,7 +3,7 @@ VENV ?= .venv
 PIP := $(VENV)/bin/pip
 PY := $(VENV)/bin/python
 
-.PHONY: venv install demo clean
+.PHONY: venv install demo nim-smoke clean
 
 venv:
 	$(PYTHON) -m venv $(VENV)
@@ -14,6 +14,9 @@ install: venv
 
 demo: install
 	PYTHONPATH=. $(PY) orchestrator.py --case uart_demo --runs 8 --mode mock
+
+nim-smoke: install
+	tools/smoke_concurrency.sh
 
 clean:
 	rm -rf $(VENV)

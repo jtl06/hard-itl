@@ -7,13 +7,16 @@ from urllib import error, request
 
 class LLMClient:
     def __init__(self) -> None:
-        base = os.getenv("NIM_BASE_URL")
-        if base:
-            self.base_url = base
+        chat_url = os.getenv("NIM_CHAT_URL")
+        if chat_url:
+            self.chat_url = chat_url
         else:
-            dgx_host = os.getenv("DGX_HOST", "127.0.0.1")
-            self.base_url = f"http://{dgx_host}:8000/v1"
-        self.model = os.getenv("NIM_MODEL", "meta/llama-3.1-8b-instruct")
+            base = os.getenv("NIM_BASE_URL")
+            if base:
+                self.chat_url = f"{base.rstrip('/')}/chat/completions"
+            else:
+                self.chat_url = "http://localhost:8000/v1/chat/completions"
+        self.model = os.getenv("NIM_MODEL", "nvidia/nemotron-nano-9b-v2")
 
     def chat(self, user_prompt: str, system_prompt: str, timeout_s: int = 8) -> str | None:
         payload = {
@@ -27,7 +30,7 @@ class LLMClient:
 
         try:
             req = request.Request(
-                f"{self.base_url}/chat/completions",
+                self.chat_url,
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
                 method="POST",

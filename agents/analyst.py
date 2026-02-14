@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 from datetime import datetime
 from pathlib import Path
@@ -13,50 +12,61 @@ class AnalystAgent:
         uart_path = run_dir / "uart.log"
         lines = [ln.strip() for ln in uart_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
 
-        key_events = []
+        key_events: list[dict[str, str | int]] = []
         ts_values: list[datetime] = []
         error_count = 0
+        has_start = False
         has_end = False
+        last_error_code = ""
 
         for idx, line in enumerate(lines):
             parts = line.split(" ", 2)
             if len(parts) < 2:
                 continue
+
             timestamp = self._parse_ts(parts[0])
             if timestamp is not None:
                 ts_values.append(timestamp)
+
             event = parts[1]
             msg = parts[2] if len(parts) > 2 else ""
 
+            if event == "RUN_START":
+                has_start = True
+            if event == "RUN_END":
+                has_end = True
             if event == "ERROR":
                 error_count += 1
                 code = msg.split(" ", 1)[0] if msg else "UNKNOWN"
+                last_error_code = code
                 key_events.append({"index": idx, "timestamp": parts[0], "code": code, "message": msg})
-            if event == "RUN_END":
-                has_end = True
 
-        throughput = self._extract_throughput(lines)
         max_gap_ms = self._max_gap_ms(ts_values)
-        pass_fail = "pass" if error_count == 0 and has_end else "fail"
-
-        la_uart_path = run_dir / "la" / "uart_decoded.csv"
-        la_rows = self._count_csv_rows(la_uart_path) if la_uart_path.exists() else 0
+        lines_per_sec = self._lines_per_sec(lines_count=len(lines), ts_values=ts_values)
+        pass_fail = "pass" if has_start and has_end and error_count == 0 else "fail"
 
         metrics = {
             "error_count": error_count,
+            "missing_start": not has_start,
             "missing_end": not has_end,
-            "throughput_lps": throughput,
+            "lines_per_sec": lines_per_sec,
             "max_gap_ms": max_gap_ms,
+            "last_error_code": last_error_code,
             "uart_line_count": len(lines),
-            "la_uart_rows": la_rows,
         }
 
         result = AnalysisResult(pass_fail=pass_fail, metrics=metrics, key_events=key_events)
-        (run_dir / "analysis.json").write_text(json.dumps({
-            "pass_fail": result.pass_fail,
-            "metrics": result.metrics,
-            "key_events": result.key_events,
-        }, indent=2), encoding="utf-8")
+        (run_dir / "analysis.json").write_text(
+            json.dumps(
+                {
+                    "pass_fail": result.pass_fail,
+                    "metrics": result.metrics,
+                    "key_events": result.key_events,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         return result
 
     @staticmethod
@@ -65,16 +75,6 @@ class AnalystAgent:
             return datetime.fromisoformat(text)
         except ValueError:
             return None
-
-    @staticmethod
-    def _extract_throughput(lines: list[str]) -> float:
-        for line in lines:
-            if "throughput_lps" in line:
-                try:
-                    return float(line.rsplit(" ", 1)[-1])
-                except ValueError:
-                    return 0.0
-        return 0.0
 
     @staticmethod
     def _max_gap_ms(ts_values: list[datetime]) -> float:
@@ -88,8 +88,10 @@ class AnalystAgent:
         return round(max_gap, 3)
 
     @staticmethod
-    def _count_csv_rows(path: Path) -> int:
-        with path.open("r", encoding="utf-8", newline="") as f:
-            reader = csv.reader(f)
-            rows = list(reader)
-        return max(0, len(rows) - 1)
+    def _lines_per_sec(lines_count: int, ts_values: list[datetime]) -> float:
+        if len(ts_values) < 2:
+            return float(lines_count)
+        dur_s = (ts_values[-1] - ts_values[0]).total_seconds()
+        if dur_s <= 0:
+            return float(lines_count)
+        return round(lines_count / dur_s, 3)
