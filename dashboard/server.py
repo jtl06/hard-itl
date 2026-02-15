@@ -108,6 +108,21 @@ HTML = """<!doctype html>
       min-height: 160px;
     }
     .card h3 { margin: 0 0 8px 0; font-size: 15px; }
+    .card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .card-head h3 { margin: 0; }
+    .card-head .meta {
+      margin: 0;
+      font-size: 11px;
+      text-align: right;
+      max-width: 68%;
+      line-height: 1.25;
+    }
     .meta { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
     pre {
       margin: 0;
@@ -301,29 +316,37 @@ HTML = """<!doctype html>
 
     <section class=\"dashboard-grid\">
       <article class=\"card area-planner\">
-        <h3>Planner</h3>
-        <div class=\"meta\">Plans next run params from current evidence.</div>
+        <div class=\"card-head\">
+          <h3>Planner</h3>
+          <div class=\"meta\">Plans next run params from evidence.</div>
+        </div>
         <div id=\"planner_status\" class=\"agent-status\">idle</div>
         <div id=\"planner_task\" class=\"meta\">Waiting for run.</div>
         <pre id=\"planner_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
       </article>
       <article class=\"card area-coder\">
-        <h3>Coder</h3>
-        <div class=\"meta\">Suggests minimal instrumentation/fix ideas.</div>
+        <div class=\"card-head\">
+          <h3>Coder</h3>
+          <div class=\"meta\">Suggests minimal instrumentation/fix ideas.</div>
+        </div>
         <div id=\"coder_status\" class=\"agent-status\">idle</div>
         <div id=\"coder_task\" class=\"meta\">Waiting for run.</div>
         <pre id=\"coder_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
       </article>
       <article class=\"card area-debugger\">
-        <h3>Debugger</h3>
-        <div class=\"meta\">Checks feasibility and risks.</div>
+        <div class=\"card-head\">
+          <h3>Debugger</h3>
+          <div class=\"meta\">Checks feasibility and risk.</div>
+        </div>
         <div id=\"critic_status\" class=\"agent-status\">idle</div>
         <div id=\"critic_task\" class=\"meta\">Waiting for run.</div>
         <pre id=\"critic_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
       </article>
       <article class=\"card area-coordinator\">
-        <h3>Coordinator</h3>
-        <div class=\"meta\">Merges outputs into one runbook.</div>
+        <div class=\"card-head\">
+          <h3>Coordinator</h3>
+          <div class=\"meta\">Merges outputs into one runbook.</div>
+        </div>
         <div id=\"summarizer_status\" class=\"agent-status\">idle</div>
         <div id=\"summarizer_task\" class=\"meta\">Waiting for run.</div>
         <pre id=\"summarizer_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
@@ -341,8 +364,10 @@ HTML = """<!doctype html>
         <div id=\"chart_meta\" class=\"meta\"></div>
       </article>
       <article class=\"card area-validator\">
-        <h3>Validator</h3>
-        <div class=\"meta\">Independent confidence and acceptance check.</div>
+        <div class=\"card-head\">
+          <h3>Validator</h3>
+          <div class=\"meta\">Confidence + coder correctness checks.</div>
+        </div>
         <div id=\"verifier_status\" class=\"agent-status\">idle</div>
         <div id=\"verifier_task\" class=\"meta\">Waiting for merged output.</div>
         <div class=\"meta\" id=\"confidence_label\">Confidence Trend: n/a</div>
