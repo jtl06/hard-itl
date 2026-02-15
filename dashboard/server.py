@@ -480,13 +480,15 @@ function renderSystemStats(gpu) {
     }
     return;
   }
-  const vramPct = (gpu.vram_total_mb || 0) > 0
-    ? ((Number(gpu.vram_used_mb || 0) / Number(gpu.vram_total_mb || 1)) * 100).toFixed(1)
+  const unifiedUsed = Number(gpu.unified_mem_used_mb || gpu.vram_used_mb || 0);
+  const unifiedTotal = Number(gpu.unified_mem_total_mb || gpu.vram_total_mb || 0);
+  const vramPct = unifiedTotal > 0
+    ? ((unifiedUsed / Math.max(1, unifiedTotal)) * 100).toFixed(1)
     : '0.0';
   const lines = [
     `GPUs: ${gpu.gpu_count ?? 'n/a'}`,
     `Compute Util: ${Number(gpu.util_percent || 0).toFixed(1)}%`,
-    `VRAM: ${gpu.vram_used_mb || 0} / ${gpu.vram_total_mb || 0} MB (${vramPct}%)`,
+    `Unified Mem: ${Math.round(unifiedUsed)} / ${Math.round(unifiedTotal)} MB (${vramPct}%)`,
     `Power: ${Number(gpu.power_w || 0).toFixed(1)} / ${Number(gpu.power_limit_w || 0).toFixed(1)} W`,
     `Temp: ${Number(gpu.temp_c || 0).toFixed(1)} C`,
   ];
@@ -494,17 +496,6 @@ function renderSystemStats(gpu) {
     lines.push(`Sample: stale (${gpu.message || 'using last good reading'})`);
   } else {
     lines.push('Sample: fresh');
-  }
-  if (gpu.per_gpu && gpu.per_gpu.length) {
-    lines.push('');
-    lines.push('Per-GPU:');
-    for (const g of gpu.per_gpu) {
-      lines.push(
-        `#${g.index}: util=${Number(g.util || 0).toFixed(1)}% ` +
-        `vram=${g.mem_used || 0}/${g.mem_total || 0}MB ` +
-        `power=${Number(g.power || 0).toFixed(1)}W`
-      );
-    }
   }
   setText('system_stats', lines.join('\\n'));
 }
@@ -980,12 +971,15 @@ class Handler(BaseHTTPRequestHandler):
             GPU_CACHE["ts"] = now
             GPU_CACHE["data"] = data
             return data
+        unified_used_mb, unified_total_mb = self._read_unified_mem_mb()
         data = {
             "available": True,
             "gpu_count": gpu_count,
             "util_percent": util_total / gpu_count,
             "vram_used_mb": int(mem_used_total),
             "vram_total_mb": int(mem_total_total),
+            "unified_mem_used_mb": int(unified_used_mb),
+            "unified_mem_total_mb": int(unified_total_mb),
             "power_w": power_total,
             "power_limit_w": power_limit_total,
             "temp_c": temp_total / gpu_count,
@@ -998,6 +992,27 @@ class Handler(BaseHTTPRequestHandler):
         GPU_CACHE["ts"] = now
         GPU_CACHE["data"] = data
         return data
+
+    @staticmethod
+    def _read_unified_mem_mb() -> tuple[int, int]:
+        total_kb = 0
+        avail_kb = 0
+        try:
+            for line in Path("/proc/meminfo").read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.startswith("MemTotal:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        total_kb = int(parts[1])
+                elif line.startswith("MemAvailable:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        avail_kb = int(parts[1])
+            if total_kb <= 0:
+                return 0, 0
+            used_kb = max(0, total_kb - avail_kb)
+            return used_kb // 1024, total_kb // 1024
+        except Exception:
+            return 0, 0
 
     def _send_html(self, html: str) -> None:
         body = html.encode("utf-8")
