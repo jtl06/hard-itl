@@ -44,7 +44,8 @@ HTML = """<!doctype html>
       color: var(--text);
     }
     .wrap {
-      max-width: 1320px;
+      max-width: 1860px;
+      width: min(96vw, 1860px);
       margin: 0 auto;
       padding: 18px;
       display: grid;
@@ -79,7 +80,7 @@ HTML = """<!doctype html>
     button:hover { filter: brightness(1.1); }
     .grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(260px, 1fr));
+      grid-template-columns: repeat(3, minmax(260px, 1fr));
       gap: 12px;
     }
     .card {
@@ -139,6 +140,9 @@ HTML = """<!doctype html>
       width: 0%;
       transition: width 280ms ease;
       background: linear-gradient(90deg, #4da3ff, #33d17a);
+    }
+    @media (max-width: 1400px) {
+      .grid { grid-template-columns: repeat(2, minmax(260px, 1fr)); }
     }
     @media (max-width: 920px) {
       .grid, .layout-main { grid-template-columns: 1fr; }
