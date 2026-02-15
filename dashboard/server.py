@@ -161,13 +161,6 @@ HTML = """<!doctype html>
       display: grid;
       gap: 8px;
     }
-    .spark-wrap {
-      margin: 6px 0 8px 0;
-      border: 1px solid #21355a;
-      border-radius: 8px;
-      background: #0a1528;
-      padding: 6px;
-    }
     .confidence-bar-wrap {
       width: 100%;
       height: 10px;
@@ -182,11 +175,6 @@ HTML = """<!doctype html>
       width: 0%;
       transition: width 220ms ease;
       background: linear-gradient(90deg, #33d17a 0%, #f6c453 55%, #ff6bb0 100%);
-    }
-    #confidence_sparkline {
-      width: 100%;
-      height: 44px;
-      display: block;
     }
     .chart-row {
       display: grid;
@@ -352,8 +340,10 @@ HTML = """<!doctype html>
         <pre id=\"summarizer_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
       </article>
       <article class=\"card area-load\">
-        <h3>Agent Load / Time</h3>
-        <div class=\"meta\">Cumulative active-time split (updates every 0.5s).</div>
+        <div class=\"card-head\">
+          <h3>Agent Load / Time</h3>
+          <div class=\"meta\">Cumulative active-time split.</div>
+        </div>
         <div class=\"chart-grid\">
           <div class=\"chart-row\"><div>Planner</div><div class=\"bar-wrap\"><div id=\"bar_planner\" class=\"bar-fill\"></div></div><div id=\"pct_planner\">0.0%</div></div>
           <div class=\"chart-row\"><div>Coder</div><div class=\"bar-wrap\"><div id=\"bar_coder\" class=\"bar-fill\"></div></div><div id=\"pct_coder\">0.0%</div></div>
@@ -372,18 +362,6 @@ HTML = """<!doctype html>
         <div id=\"verifier_task\" class=\"meta\">Waiting for merged output.</div>
         <div class=\"meta\" id=\"confidence_label\">Confidence Trend: n/a</div>
         <div class=\"confidence-bar-wrap\"><div id=\"confidence_fill\" class=\"confidence-bar-fill\"></div></div>
-        <div class=\"spark-wrap\">
-          <svg id=\"confidence_sparkline\" viewBox=\"0 0 300 44\" preserveAspectRatio=\"none\" aria-label=\"Confidence sparkline\">
-            <defs>
-              <linearGradient id=\"confGrad\" x1=\"0%\" y1=\"0%\" x2=\"100%\" y2=\"0%\">
-                <stop offset=\"0%\" stop-color=\"#33d17a\" />
-                <stop offset=\"55%\" stop-color=\"#f6c453\" />
-                <stop offset=\"100%\" stop-color=\"#ff6bb0\" />
-              </linearGradient>
-            </defs>
-            <polyline id=\"confidence_polyline\" fill=\"none\" stroke=\"url(#confGrad)\" stroke-width=\"3\" points=\"\" />
-          </svg>
-        </div>
         <pre id=\"verifier_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
       </article>
       <article class=\"card area-overall\">
@@ -536,10 +514,9 @@ function renderStateBundle(bundle) {
 }
 
 function renderConfidenceSparkline(state) {
-  const poly = document.getElementById('confidence_polyline');
   const label = document.getElementById('confidence_label');
   const fill = document.getElementById('confidence_fill');
-  if (!poly || !label || !fill) return;
+  if (!label || !fill) return;
   const stream = state.confidence_stream || [];
   const vals = stream.length
     ? stream.map(p => Number((p || {}).value))
@@ -548,21 +525,10 @@ function renderConfidenceSparkline(state) {
     .filter(v => Number.isFinite(v))
     .map(v => Math.max(0, Math.min(1, v)));
   if (!clean.length) {
-    poly.setAttribute('points', '');
     label.textContent = 'Confidence Trend: n/a';
     fill.style.width = '0%';
     return;
   }
-  const width = 300;
-  const height = 44;
-  const n = clean.length;
-  const xStep = n > 1 ? width / (n - 1) : 0;
-  const pts = clean.map((v, i) => {
-    const x = (i * xStep).toFixed(1);
-    const y = (height - (v * (height - 4)) - 2).toFixed(1);
-    return `${x},${y}`;
-  }).join(' ');
-  poly.setAttribute('points', pts);
   const latest = clean[clean.length - 1];
   label.textContent = `Confidence Trend: ${(latest * 100).toFixed(1)}%`;
   fill.style.width = `${(latest * 100).toFixed(1)}%`;
@@ -663,7 +629,7 @@ document.getElementById('reset_btn').addEventListener('click', resetRunState);
 document.getElementById('case').addEventListener('change', updateTargetVisibility);
 refreshOnce();
 initSSE();
-setInterval(refreshOnce, 500);
+setInterval(refreshOnce, 450);
 updateTargetVisibility();
 </script>
 </body>
@@ -893,7 +859,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self.wfile.write(b": ping\n\n")
                     self.wfile.flush()
-                time.sleep(0.5)
+                time.sleep(0.45)
         except (BrokenPipeError, ConnectionResetError):
             return
 
