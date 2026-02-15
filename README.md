@@ -2,6 +2,33 @@
 
 Local-only multi-agent HIL pipeline. Only `runner/` touches hardware (`build`, `flash`, `/dev/tty*`).
 
+## Mission and purpose
+
+This project demonstrates a practical multi-agent hardware-in-the-loop workflow for embedded debugging:
+- use real UART evidence from the DUT as the single source of truth
+- run planner/coder/debugger/coordinator roles against that evidence
+- converge quickly on a stable, passing configuration
+
+The goal is to make hardware debugging observable and repeatable, not just ad-hoc trial-and-error.
+
+## Primary use cases
+
+- Interactive demos: show live agent reasoning summaries and UART logs in one dashboard.
+- Rapid bring-up: validate that firmware boots, emits expected markers, and ends runs cleanly.
+- Regression checks: replay the same case across multiple runs and compare artifacts.
+- Safe automation: keep all hardware-touching actions isolated in `runner/`.
+
+## Hardware platform (DGX Spark)
+
+Target host setup is DGX Spark on `Ubuntu 24.04 (ARM64)`:
+- NIM inference runs locally via Docker (`make nim-start`).
+- Orchestrator, agents, dashboard, build, flash, and UART capture run on the same host.
+- RP2350 board is connected over USB CDC (`/dev/serial/by-id/*` preferred).
+
+For real runs, set:
+- `PICO_SDK_PATH` for RP2350 firmware builds
+- Docker/NGC access for NIM (`NGC_API_KEY`) if using LLM orchestration
+
 ## Quick start
 
 ```bash

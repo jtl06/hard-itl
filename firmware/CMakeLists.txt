@@ -1,6 +1,18 @@
 cmake_minimum_required(VERSION 3.13)
 
-include(pico_sdk_import.cmake)
+# Support both local pico_sdk_import.cmake and direct SDK-path import.
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake")
+elseif(DEFINED ENV{PICO_SDK_PATH} AND EXISTS "$ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake")
+    include("$ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake")
+else()
+    message(FATAL_ERROR
+        "Could not find pico_sdk_import.cmake. "
+        "Set PICO_SDK_PATH to a valid pico-sdk checkout "
+        "(expects $PICO_SDK_PATH/external/pico_sdk_import.cmake)."
+    )
+endif()
+
 project(rp2350_uart_demo C CXX ASM)
 
 pico_sdk_init()
