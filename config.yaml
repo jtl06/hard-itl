@@ -2,8 +2,8 @@ runner:
   flash_method: auto
   serial_port: ""
   serial_baud: 115200
-  serial_timeout_s: 12
-  reenumeration_timeout_s: 12
+  serial_timeout_s: 30
+  reenumeration_timeout_s: 20
   prefer_by_id: true
   build_cmd: "make -C firmware all"
   build_cwd: "."
