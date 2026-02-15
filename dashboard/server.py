@@ -153,6 +153,21 @@ HTML = """<!doctype html>
       background: #0a1528;
       padding: 6px;
     }
+    .confidence-bar-wrap {
+      width: 100%;
+      height: 10px;
+      border-radius: 999px;
+      border: 1px solid #21355a;
+      background: #0a1528;
+      overflow: hidden;
+      margin: 0 0 8px 0;
+    }
+    .confidence-bar-fill {
+      height: 100%;
+      width: 0%;
+      transition: width 220ms ease;
+      background: linear-gradient(90deg, #33d17a 0%, #f6c453 55%, #ff6bb0 100%);
+    }
     #confidence_sparkline {
       width: 100%;
       height: 44px;
@@ -331,6 +346,7 @@ HTML = """<!doctype html>
         <div id=\"verifier_status\" class=\"agent-status\">idle</div>
         <div id=\"verifier_task\" class=\"meta\">Waiting for merged output.</div>
         <div class=\"meta\" id=\"confidence_label\">Confidence Trend: n/a</div>
+        <div class=\"confidence-bar-wrap\"><div id=\"confidence_fill\" class=\"confidence-bar-fill\"></div></div>
         <div class=\"spark-wrap\">
           <svg id=\"confidence_sparkline\" viewBox=\"0 0 300 44\" preserveAspectRatio=\"none\" aria-label=\"Confidence sparkline\">
             <defs>
@@ -497,28 +513,34 @@ function renderStateBundle(bundle) {
 function renderConfidenceSparkline(state) {
   const poly = document.getElementById('confidence_polyline');
   const label = document.getElementById('confidence_label');
-  if (!poly || !label) return;
-  const hist = state.history || [];
-  const vals = hist
-    .map(r => Number(r.confidence))
+  const fill = document.getElementById('confidence_fill');
+  if (!poly || !label || !fill) return;
+  const stream = state.confidence_stream || [];
+  const vals = stream.length
+    ? stream.map(p => Number((p || {}).value))
+    : (state.history || []).map(r => Number(r.confidence));
+  const clean = vals
     .filter(v => Number.isFinite(v))
     .map(v => Math.max(0, Math.min(1, v)));
-  if (!vals.length) {
+  if (!clean.length) {
     poly.setAttribute('points', '');
     label.textContent = 'Confidence Trend: n/a';
+    fill.style.width = '0%';
     return;
   }
   const width = 300;
   const height = 44;
-  const n = vals.length;
+  const n = clean.length;
   const xStep = n > 1 ? width / (n - 1) : 0;
-  const pts = vals.map((v, i) => {
+  const pts = clean.map((v, i) => {
     const x = (i * xStep).toFixed(1);
     const y = (height - (v * (height - 4)) - 2).toFixed(1);
     return `${x},${y}`;
   }).join(' ');
   poly.setAttribute('points', pts);
-  label.textContent = `Confidence Trend: ${(vals[vals.length - 1] * 100).toFixed(1)}%`;
+  const latest = clean[clean.length - 1];
+  label.textContent = `Confidence Trend: ${(latest * 100).toFixed(1)}%`;
+  fill.style.width = `${(latest * 100).toFixed(1)}%`;
 }
 
 function renderSystemStats(gpu) {

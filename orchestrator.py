@@ -176,6 +176,7 @@ def run_case(
     solved = False
     solved_run = 0
     for run_index in range(1, runs + 1):
+        _set_live_confidence(state, value=0.5, source=f"run{run_index}:start")
         _set_overall(state, status="running", message=f"Running {run_index}/{runs}", current_run=run_index)
         _set_agent(
             state,
@@ -223,6 +224,7 @@ def run_case(
             nonlocal debug_early_started
             uart_stream.append(line)
             state["latest_uart"] = uart_stream[-uart_tail_lines:]
+            _set_live_confidence(state, value=_live_confidence_from_uart(uart_stream), source="uart")
             if (not debug_early_started) and " ERROR " in f" {line} ":
                 debug_early_started = True
                 _set_agent(
@@ -356,6 +358,11 @@ def run_case(
                 "error_count": analysis.metrics["error_count"],
                 "run_dir": run_result["run_dir"],
             }
+        )
+        _set_live_confidence(
+            state,
+            value=_derive_confidence(nim_summary, analysis.metrics, analysis.pass_fail),
+            source=f"run{run_index}:final",
         )
         state["last_analysis"] = analysis.metrics
         _update_latest_uart(state, run_dir=run_dir, tail_lines=uart_tail_lines)
@@ -510,6 +517,8 @@ def _init_state(case_id: str, runs: int, mode: str) -> dict[str, Any]:
         "agent_calls": [],
         "last_analysis": {},
         "overall_output": "",
+        "validator_live_confidence": 0.5,
+        "confidence_stream": [],
         "history": [],
     }
 
@@ -575,6 +584,10 @@ def _nim_status_update(
         "verifier": "Validating coder output and scoring confidence",
     }
     _set_agent(state, role, status, task_map.get(role, role.title()), reasoning)
+    if role == "verifier":
+        parsed = _extract_confidence_from_text(message)
+        if parsed is not None:
+            _set_live_confidence(state, value=parsed, source=f"verifier:{status}")
     if trace_to_stdout and role in {"planner", "critic", "summarizer", "verifier"}:
         print(f"[{role}] {reasoning}")
     if state_path is not None:
@@ -735,14 +748,9 @@ def _baud_options_from_case_cfg(case_cfg: dict[str, Any]) -> list[int]:
 
 
 def _derive_confidence(summary_text: str, metrics: dict[str, Any], status: str) -> float:
-    text = summary_text or ""
-    m = re.search(r"\bconfidence\s*[:=\[]?\s*(0(?:\.\d+)?|1(?:\.0+)?)\b", text, flags=re.IGNORECASE)
-    if m:
-        try:
-            v = float(m.group(1))
-            return max(0.0, min(1.0, round(v, 3)))
-        except ValueError:
-            pass
+    parsed = _extract_confidence_from_text(summary_text or "")
+    if parsed is not None:
+        return parsed
     # Fallback confidence heuristic when no explicit validator value is present.
     err = int(metrics.get("error_count", 0) or 0)
     miss_start = bool(metrics.get("missing_start", False))
@@ -750,6 +758,50 @@ def _derive_confidence(summary_text: str, metrics: dict[str, Any], status: str) 
     base = 0.92 if status == "pass" else 0.55
     penalty = min(0.45, err * 0.12) + (0.12 if miss_start else 0.0) + (0.12 if miss_end else 0.0)
     return round(max(0.05, min(0.99, base - penalty)), 3)
+
+
+def _extract_confidence_from_text(text: str) -> float | None:
+    m = re.search(r"\bconfidence\s*[:=\[]?\s*(0(?:\.\d+)?|1(?:\.0+)?)\b", text, flags=re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        v = float(m.group(1))
+        return max(0.0, min(1.0, round(v, 3)))
+    except ValueError:
+        return None
+
+
+def _set_live_confidence(state: dict[str, Any], value: float, source: str) -> None:
+    v = max(0.0, min(1.0, float(value)))
+    state["validator_live_confidence"] = round(v, 3)
+    stream = state.setdefault("confidence_stream", [])
+    stream.append(
+        {
+            "t": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "value": round(v, 3),
+            "source": source,
+        }
+    )
+    if len(stream) > 160:
+        del stream[:-160]
+
+
+def _live_confidence_from_uart(lines: list[str]) -> float:
+    if not lines:
+        return 0.5
+    err = sum(1 for ln in lines if " ERROR " in f" {ln} ")
+    has_start = any(" RUN_START " in f" {ln} " for ln in lines)
+    has_end = any(" RUN_END " in f" {ln} " for ln in lines)
+    has_pass = any(" test_result PASS" in ln for ln in lines)
+    score = 0.62
+    score -= min(0.42, 0.14 * err)
+    if has_start:
+        score += 0.04
+    if has_end:
+        score += 0.08
+    if has_pass:
+        score += 0.22
+    return max(0.05, min(0.99, round(score, 3)))
 
 
 def _normalize_case_params(
