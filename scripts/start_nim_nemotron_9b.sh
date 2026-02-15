@@ -14,7 +14,7 @@ set -euo pipefail
 # - NIM_DETACH (default: 0; set to 1 to run detached)
 # - NIM_PLATFORM (optional; e.g. linux/arm64 or linux/amd64)
 
-NIM_IMAGE="${NIM_IMAGE:-nvcr.io/nim/nvidia/nemotron-nano-9b-v2:latest}"
+NIM_IMAGE="${NIM_IMAGE:-nvcr.io/nim/nvidia/nvidia-nemotron-nano-9b-v2-dgx-spark:1.0.0-variant}"
 NIM_CONTAINER_NAME="${NIM_CONTAINER_NAME:-nim-nemotron-9b}"
 NIM_PORT="${NIM_PORT:-8000}"
 NIM_CACHE_DIR="${NIM_CACHE_DIR:-$HOME/.cache/nim}"
