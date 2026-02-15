@@ -52,8 +52,14 @@ $(RP_BUILD)/%.uf2: CMakeLists.txt rp2350_uart_demo.c rp2350_framing_hunt.c rp235
 			echo "Expected: $$PICO_SDK_PATH/src/boards/include/boards/$(PICO_BOARD).h"; \
 			echo "If build fails, set PICO_BOARD to a valid board for your Tiny2350 SDK."; \
 		fi; \
+		if ! command -v arm-none-eabi-gcc >/dev/null 2>&1; then \
+			echo "ERROR: arm-none-eabi-gcc not found."; \
+			echo "Install GNU Arm Embedded toolchain and retry."; \
+			echo "Ubuntu example: sudo apt-get install gcc-arm-none-eabi"; \
+			exit 2; \
+		fi; \
 		cmake -S . -B "$(RP_BUILD)" -DPICO_BOARD="$(PICO_BOARD)" -DTARGET_MAGIC_HEX="$(TARGET_MAGIC_HEX)"; \
-		cmake --build "$(RP_BUILD)" -j --target "$*"; \
+		cmake --build "$(RP_BUILD)" --target "$*" --parallel; \
 	fi
 
 clean:

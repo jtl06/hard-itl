@@ -28,6 +28,7 @@ Target host setup is DGX Spark on `Ubuntu 24.04 (ARM64)`:
 For real runs, set:
 - `PICO_SDK_PATH` for RP2350 firmware builds
 - Docker/NGC access for NIM (`NGC_API_KEY`) if using LLM orchestration
+- GNU Arm Embedded toolchain (`arm-none-eabi-gcc`) installed on host
 
 ## Quick start
 
@@ -166,6 +167,9 @@ make real
 ```
 
 Notes:
+- Install build dependencies on Ubuntu:
+  - `sudo apt-get update`
+  - `sudo apt-get install -y build-essential cmake ninja-build gcc-arm-none-eabi`
 - Serial setup in code currently uses Linux-style `stty -F ...`.
 - In real mode, UART data is actual DUT output; synthetic markers are not injected.
 - If firmware never prints `RUN_END`, run fails with `ERROR TIMEOUT missing RUN_END`.
