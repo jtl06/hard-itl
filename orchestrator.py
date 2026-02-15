@@ -452,8 +452,9 @@ def _set_overall(state: dict[str, Any], status: str, message: str, current_run: 
 def _set_agent(state: dict[str, Any], role: str, status: str, task: str, fragment: str | None = None) -> None:
     _update_agent_metrics(state, role, status)
     frag = fragment if fragment is not None else task
-    if len(frag) > 180:
-        frag = frag[:177] + "..."
+    # Keep a bit more model text visible in the dashboard before truncating.
+    if len(frag) > 255:
+        frag = frag[:252] + "..."
     state["agents"][role]["status"] = status
     state["agents"][role]["task"] = task
     state["agents"][role]["fragment"] = frag
@@ -568,8 +569,8 @@ def _print_live_run_details(
         print("  agent fragments:")
         for item in nim_orchestrator.last_fanout:
             frag = " ".join(item.text.split())
-            if len(frag) > 180:
-                frag = frag[:177] + "..."
+            if len(frag) > 215:
+                frag = frag[:212] + "..."
             print(f"    {item.role}: {frag}")
 
 

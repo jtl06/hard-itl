@@ -106,9 +106,13 @@ HTML = """<!doctype html>
       background: #0a1528;
     }
     .agent-status { font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }
-    .layout-bottom {
+    .layout-main {
       display: grid;
       grid-template-columns: 1.2fr 1fr;
+      gap: 12px;
+    }
+    .right-stack {
+      display: grid;
       gap: 12px;
     }
     .chart-grid {
@@ -137,7 +141,7 @@ HTML = """<!doctype html>
       background: linear-gradient(90deg, #4da3ff, #33d17a);
     }
     @media (max-width: 920px) {
-      .grid, .layout-bottom { grid-template-columns: 1fr; }
+      .grid, .layout-main { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -160,22 +164,22 @@ HTML = """<!doctype html>
           </select>
         </label>
         <label>Runs <input id=\"runs\" type=\"number\" value=\"8\" min=\"1\" max=\"100\"></label>
-        <label>Target Baud <input id=\"target_baud\" type=\"number\" value=\"76200\" min=\"1200\" step=\"1\"></label>
-        <label>Target Frame
+        <label id=\"target_baud_wrap\">Target Baud <input id=\"target_baud\" type=\"number\" value=\"76200\" min=\"1200\" step=\"1\"></label>
+        <label id=\"target_frame_wrap\" style=\"display:none;\">Target Frame
           <select id=\"target_frame\">
             <option value=\"8N1\">8N1</option>
             <option value=\"7E1\">7E1</option>
             <option value=\"8E1\">8E1</option>
           </select>
         </label>
-        <label>Target Parity
+        <label id=\"target_parity_wrap\" style=\"display:none;\">Target Parity
           <select id=\"target_parity\">
             <option value=\"none\">none</option>
             <option value=\"even\">even</option>
             <option value=\"odd\">odd</option>
           </select>
         </label>
-        <label>Target Magic <input id=\"target_magic\" value=\"0xC0FFEE42\"></label>
+        <label id=\"target_magic_wrap\" style=\"display:none;\">Target Magic <input id=\"target_magic\" value=\"0xC0FFEE42\"></label>
         <label>Mode
           <select id=\"mode\"><option value=\"mock\">mock</option><option value=\"real\">real</option></select>
         </label>
@@ -216,47 +220,54 @@ HTML = """<!doctype html>
       </article>
     </section>
 
-    <section class=\"layout-bottom\">
+    <section class=\"layout-main\">
       <article class=\"card\">
         <h3>Overall Output</h3>
         <pre id=\"overall_output\">No output yet. Start a run to populate the merged summarizer output.</pre>
       </article>
-      <article class=\"card\">
-        <h3>Latest UART</h3>
-        <pre id=\"latest_uart\">No UART lines yet. Start a run to stream latest uart.log tail.</pre>
-      </article>
-    </section>
 
-    <section class=\"card\">
-      <h3>Run Tracker</h3>
-      <pre id=\"history\">No runs yet.</pre>
-    </section>
-
-    <section class=\"card\">
-      <h3>Agent Load / Time</h3>
-      <div class=\"meta\">Cumulative active-time split (updates every 1s).</div>
-      <div class=\"chart-grid\">
-        <div class=\"chart-row\"><div>Planner</div><div class=\"bar-wrap\"><div id=\"bar_planner\" class=\"bar-fill\"></div></div><div id=\"pct_planner\">0.0%</div></div>
-        <div class=\"chart-row\"><div>Coder</div><div class=\"bar-wrap\"><div id=\"bar_coder\" class=\"bar-fill\"></div></div><div id=\"pct_coder\">0.0%</div></div>
-        <div class=\"chart-row\"><div>Debugger</div><div class=\"bar-wrap\"><div id=\"bar_critic\" class=\"bar-fill\"></div></div><div id=\"pct_critic\">0.0%</div></div>
-        <div class=\"chart-row\"><div>Coordinator</div><div class=\"bar-wrap\"><div id=\"bar_summarizer\" class=\"bar-fill\"></div></div><div id=\"pct_summarizer\">0.0%</div></div>
+      <div class=\"right-stack\">
+        <article class=\"card\">
+          <h3>Latest UART</h3>
+          <pre id=\"latest_uart\">No UART lines yet. Start a run to stream latest uart.log tail.</pre>
+        </article>
+        <article class=\"card\">
+          <h3>Run Tracker</h3>
+          <pre id=\"history\">No runs yet.</pre>
+        </article>
+        <article class=\"card\">
+          <h3>Agent Load / Time</h3>
+          <div class=\"meta\">Cumulative active-time split (updates every 1s).</div>
+          <div class=\"chart-grid\">
+            <div class=\"chart-row\"><div>Planner</div><div class=\"bar-wrap\"><div id=\"bar_planner\" class=\"bar-fill\"></div></div><div id=\"pct_planner\">0.0%</div></div>
+            <div class=\"chart-row\"><div>Coder</div><div class=\"bar-wrap\"><div id=\"bar_coder\" class=\"bar-fill\"></div></div><div id=\"pct_coder\">0.0%</div></div>
+            <div class=\"chart-row\"><div>Debugger</div><div class=\"bar-wrap\"><div id=\"bar_critic\" class=\"bar-fill\"></div></div><div id=\"pct_critic\">0.0%</div></div>
+            <div class=\"chart-row\"><div>Coordinator</div><div class=\"bar-wrap\"><div id=\"bar_summarizer\" class=\"bar-fill\"></div></div><div id=\"pct_summarizer\">0.0%</div></div>
+          </div>
+          <div id=\"chart_meta\" class=\"meta\"></div>
+        </article>
       </div>
-      <div id=\"chart_meta\" class=\"meta\"></div>
     </section>
   </div>
 
 <script>
 async function startRun() {
   try {
+    const caseId = document.getElementById('case').value;
     const payload = {
-      case: document.getElementById('case').value,
+      case: caseId,
       runs: Number(document.getElementById('runs').value || 8),
-      target_baud: Number(document.getElementById('target_baud').value || 0),
-      target_frame: document.getElementById('target_frame').value,
-      target_parity: document.getElementById('target_parity').value,
-      target_magic: document.getElementById('target_magic').value,
       mode: document.getElementById('mode').value,
     };
+    if (caseId === 'uart_demo') {
+      payload.target_baud = Number(document.getElementById('target_baud').value || 0);
+    } else if (caseId === 'framing_hunt') {
+      payload.target_frame = document.getElementById('target_frame').value;
+    } else if (caseId === 'parity_hunt') {
+      payload.target_parity = document.getElementById('target_parity').value;
+    } else if (caseId === 'signature_check') {
+      payload.target_magic = document.getElementById('target_magic').value;
+    }
     const res = await fetch('/api/run', {
       method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
     });
@@ -333,6 +344,14 @@ function renderStateBundle(bundle) {
   renderAgentChart(state);
 }
 
+function updateTargetVisibility() {
+  const c = document.getElementById('case').value;
+  document.getElementById('target_baud_wrap').style.display = c === 'uart_demo' ? '' : 'none';
+  document.getElementById('target_frame_wrap').style.display = c === 'framing_hunt' ? '' : 'none';
+  document.getElementById('target_parity_wrap').style.display = c === 'parity_hunt' ? '' : 'none';
+  document.getElementById('target_magic_wrap').style.display = c === 'signature_check' ? '' : 'none';
+}
+
 function renderAgentChart(state) {
   const m = state.agent_metrics || {};
   const roles = ['planner', 'coder', 'critic', 'summarizer'];
@@ -383,9 +402,11 @@ function initSSE() {
 }
 
 document.getElementById('start_btn').addEventListener('click', startRun);
+document.getElementById('case').addEventListener('change', updateTargetVisibility);
 refreshOnce();
 initSSE();
 setInterval(refreshOnce, 1000);
+updateTargetVisibility();
 </script>
 </body>
 </html>
