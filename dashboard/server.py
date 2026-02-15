@@ -147,6 +147,9 @@ HTML = """<!doctype html>
       transition: width 280ms ease;
       background: linear-gradient(90deg, #4da3ff, #33d17a);
     }
+    .ok-text { color: var(--ok); font-weight: 700; }
+    .err-text { color: var(--err); font-weight: 700; }
+    #history .ok-text, #history .err-text { font-weight: 700; }
     @media (max-width: 1400px) {
       .dashboard-grid {
         grid-template-columns: repeat(2, minmax(280px, 1fr));
@@ -210,7 +213,7 @@ HTML = """<!doctype html>
         </label>
         <label id=\"target_magic_wrap\" style=\"display:none;\">Target Magic <input id=\"target_magic\" value=\"0xC0FFEE42\"></label>
         <label>Mode
-          <select id=\"mode\"><option value=\"mock\">mock</option><option value=\"real\">real</option></select>
+          <select id=\"mode\"><option value=\"demo\">demo</option><option value=\"real\">real</option></select>
         </label>
         <label>Agent Mode
           <select id=\"agent_mode\">
@@ -219,6 +222,7 @@ HTML = """<!doctype html>
           </select>
         </label>
         <button id=\"start_btn\">Start Run</button>
+        <button id=\"reset_btn\" type=\"button\">Clear / Reset</button>
       </div>
       <div id=\"proc_info\" class=\"meta\"></div>
       <div id=\"overall_msg\" class=\"meta\"></div>
@@ -255,7 +259,7 @@ HTML = """<!doctype html>
       </article>
       <article class=\"card area-load\">
         <h3>Agent Load / Time</h3>
-        <div class=\"meta\">Cumulative active-time split (updates every 1s).</div>
+        <div class=\"meta\">Cumulative active-time split (updates every 0.5s).</div>
         <div class=\"chart-grid\">
           <div class=\"chart-row\"><div>Planner</div><div class=\"bar-wrap\"><div id=\"bar_planner\" class=\"bar-fill\"></div></div><div id=\"pct_planner\">0.0%</div></div>
           <div class=\"chart-row\"><div>Coder</div><div class=\"bar-wrap\"><div id=\"bar_coder\" class=\"bar-fill\"></div></div><div id=\"pct_coder\">0.0%</div></div>
@@ -263,6 +267,8 @@ HTML = """<!doctype html>
           <div class=\"chart-row\"><div>Coordinator</div><div class=\"bar-wrap\"><div id=\"bar_summarizer\" class=\"bar-fill\"></div></div><div id=\"pct_summarizer\">0.0%</div></div>
         </div>
         <div id=\"chart_meta\" class=\"meta\"></div>
+        <div class=\"meta\" style=\"margin-top:8px;\">Agent Calls</div>
+        <pre id=\"agent_calls\">No agent calls yet.</pre>
       </article>
       <article class=\"card area-overall\">
         <h3>Overall Output</h3>
@@ -313,9 +319,31 @@ async function startRun() {
   }
 }
 
+async function resetRunState() {
+  try {
+    const res = await fetch('/api/reset', { method: 'POST' });
+    const data = await res.json().catch(() => ({ok:false, message: 'Failed to parse reset response'}));
+    const msg = data.message || `HTTP ${res.status}`;
+    document.getElementById('proc_info').textContent = msg;
+    if (!res.ok) {
+      document.getElementById('overall_msg').textContent = msg;
+    } else {
+      await refreshOnce();
+    }
+  } catch (err) {
+    document.getElementById('proc_info').textContent = `Reset failed: ${String(err)}`;
+    document.getElementById('overall_msg').textContent = 'Unable to reach dashboard backend.';
+  }
+}
+
 function setText(id, value) {
   const el = document.getElementById(id);
   if (el) el.textContent = (value === undefined || value === null || value === '') ? '—' : value;
+}
+
+function setHtml(id, html) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = html;
 }
 
 function applyStatusClass(id, status) {
@@ -345,6 +373,13 @@ function renderStateBundle(bundle) {
   applyStatusClass('overall_status', o.status || 'idle');
   setText('overall_progress', `${o.current_run || 0}/${o.runs_total || 0}`);
   setText('overall_msg', o.message || '');
+  const overallMsgEl = document.getElementById('overall_msg');
+  if (overallMsgEl) {
+    const msg = String(o.message || '').toLowerCase();
+    overallMsgEl.classList.remove('ok-text', 'err-text');
+    if (msg.includes('successful') || msg.includes('pass')) overallMsgEl.classList.add('ok-text');
+    if (msg.includes('failed') || msg.includes('fail') || msg.includes('error')) overallMsgEl.classList.add('err-text');
+  }
   const total = Number(o.runs_total || 0);
   const cur = Number(o.current_run || 0);
   const pct = total > 0 ? Math.max(0, Math.min(100, (cur / total) * 100)) : 0;
@@ -359,12 +394,16 @@ function renderStateBundle(bundle) {
 
   setText('overall_output', state.overall_output || 'No output yet. Start a run to populate summarizer output.');
   setText('latest_uart', (state.latest_uart || []).join('\\n') || 'No UART lines yet.');
-  const history = (state.history || []).map(r =>
-    (String(r.guess_key || '') !== '')
-      ? `run ${r.run}: ${String(r.status || '').toUpperCase()}  guess=${r.guess_value}  target=${r.target_value}  errors=${r.error_count}  id=${r.run_id}`
-      : `run ${r.run}: ${String(r.status || '').toUpperCase()}  rate=${r.uart_rate}  buf=${r.buffer_size}  errors=${r.error_count}  id=${r.run_id}`
-  ).join('\\n');
-  setText('history', history || 'No runs yet.');
+  const historyRows = (state.history || []).map(r => {
+    const status = String(r.status || '').toUpperCase();
+    const statusClass = status === 'PASS' ? 'ok-text' : (status === 'FAIL' ? 'err-text' : '');
+    const body = (String(r.guess_key || '') !== '')
+      ? `run ${r.run}: <span class="${statusClass}">${status}</span>  guess=${r.guess_value}  target=${r.target_value}  errors=${r.error_count}  id=${r.run_id}`
+      : `run ${r.run}: <span class="${statusClass}">${status}</span>  rate=${r.uart_rate}  buf=${r.buffer_size}  errors=${r.error_count}  id=${r.run_id}`;
+    return body;
+  });
+  setHtml('history', historyRows.length ? historyRows.join('<br>') : 'No runs yet.');
+  setText('agent_calls', (state.agent_calls || []).slice(-12).join('\\n') || 'No agent calls yet.');
 
   const procMsg = p.running
     ? `process: running (pid=${p.pid || 'n/a'})`
@@ -432,10 +471,11 @@ function initSSE() {
 }
 
 document.getElementById('start_btn').addEventListener('click', startRun);
+document.getElementById('reset_btn').addEventListener('click', resetRunState);
 document.getElementById('case').addEventListener('change', updateTargetVisibility);
 refreshOnce();
 initSSE();
-setInterval(refreshOnce, 1000);
+setInterval(refreshOnce, 500);
 updateTargetVisibility();
 </script>
 </body>
@@ -469,6 +509,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path in {"/api/start", "/api/run"}:
             self._handle_start()
             return
+        if parsed.path == "/api/reset":
+            self._handle_reset()
+            return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def _handle_start(self) -> None:
@@ -479,7 +522,8 @@ class Handler(BaseHTTPRequestHandler):
 
             case = str(payload.get("case", "uart_demo"))
             runs = int(payload.get("runs", 8))
-            mode = str(payload.get("mode", "mock"))
+            requested_mode = str(payload.get("mode", "demo"))
+            mode = "mock" if requested_mode == "demo" else requested_mode
             target_baud = int(payload.get("target_baud", 0))
             target_frame = str(payload.get("target_frame", ""))
             target_parity = str(payload.get("target_parity", ""))
@@ -514,9 +558,9 @@ class Handler(BaseHTTPRequestHandler):
                 init_state = {
                     "overall": {
                         "status": "running",
-                        "message": f"Launching run: case={case} mode={mode} agent_mode={agent_mode} runs={runs}",
+                        "message": f"Launching run: case={case} mode={requested_mode} agent_mode={agent_mode} runs={runs}",
                         "case_id": case,
-                        "mode": mode,
+                        "mode": requested_mode,
                         "runs_total": runs,
                         "current_run": 0,
                         "updated_at": "",
@@ -528,6 +572,7 @@ class Handler(BaseHTTPRequestHandler):
                         "summarizer": {"status": "idle", "task": "Waiting", "fragment": ""},
                     },
                     "latest_uart": [],
+                    "agent_calls": [],
                     "last_analysis": {},
                     "overall_output": "",
                     "history": [],
@@ -569,7 +614,7 @@ class Handler(BaseHTTPRequestHandler):
                     text=True,
                 )
 
-            self._send_json({"ok": True, "message": f"Started {mode} run for case={case} runs={runs}."})
+            self._send_json({"ok": True, "message": f"Started {requested_mode} run for case={case} runs={runs}."})
         except Exception as exc:
             fail_state = {
                 "overall": {
@@ -588,12 +633,51 @@ class Handler(BaseHTTPRequestHandler):
                     "summarizer": {"status": "idle", "task": "Waiting", "fragment": ""},
                 },
                 "latest_uart": [],
+                "agent_calls": [],
                 "last_analysis": {},
                 "overall_output": "",
                 "history": [],
             }
             STATE_PATH.write_text(json.dumps(fail_state, indent=2), encoding="utf-8")
             self._send_json({"ok": False, "message": f"Failed to start run: {exc}"}, code=500)
+
+    def _handle_reset(self) -> None:
+        with LOCK:
+            running = PROCESS is not None and PROCESS.poll() is None
+            if running:
+                self._send_json({"ok": False, "message": "Cannot reset while a run is in progress."}, code=409)
+                return
+        reset_state = {
+            "overall": {
+                "status": "idle",
+                "message": "State cleared. Ready for next run.",
+                "case_id": "",
+                "mode": "",
+                "runs_total": 0,
+                "current_run": 0,
+                "updated_at": "",
+            },
+            "agents": {
+                "planner": {"status": "idle", "task": "Waiting", "fragment": ""},
+                "coder": {"status": "idle", "task": "Waiting", "fragment": ""},
+                "critic": {"status": "idle", "task": "Waiting", "fragment": ""},
+                "summarizer": {"status": "idle", "task": "Waiting", "fragment": ""},
+            },
+            "agent_metrics": {
+                "planner": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": time.time()},
+                "coder": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": time.time()},
+                "critic": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": time.time()},
+                "summarizer": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": time.time()},
+            },
+            "latest_uart": [],
+            "agent_calls": [],
+            "last_analysis": {},
+            "overall_output": "",
+            "history": [],
+        }
+        STATE_PATH.write_text(json.dumps(reset_state, indent=2), encoding="utf-8")
+        LOG_PATH.write_text("", encoding="utf-8")
+        self._send_json({"ok": True, "message": "Dashboard state reset."})
 
     def _send_sse_stream(self) -> None:
         self.send_response(HTTPStatus.OK)
@@ -640,6 +724,7 @@ class Handler(BaseHTTPRequestHandler):
                     "summarizer": {"status": "idle", "task": "", "fragment": ""},
                 },
                 "latest_uart": [],
+                "agent_calls": [],
                 "overall_output": "",
                 "history": [],
             }

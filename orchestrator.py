@@ -439,6 +439,7 @@ def _init_state(case_id: str, runs: int, mode: str) -> dict[str, Any]:
             "summarizer": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": now_epoch},
         },
         "latest_uart": [],
+        "agent_calls": [],
         "last_analysis": {},
         "overall_output": "",
         "history": [],
@@ -492,6 +493,11 @@ def _nim_status_update(
     message: str,
     trace_to_stdout: bool = False,
 ) -> None:
+    if message.startswith("Peer call "):
+        calls = state.setdefault("agent_calls", [])
+        calls.append(f"{datetime.now(timezone.utc).isoformat(timespec='seconds')} {message}")
+        if len(calls) > 40:
+            del calls[:-40]
     reasoning = _reasoning_summary(state=state, role=role, status=status, message=message)
     task_map = {
         "planner": "Planning next experiments",

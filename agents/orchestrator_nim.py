@@ -131,6 +131,9 @@ class NIMOrchestrator:
                     if not msgs:
                         refreshed.append(item)
                         continue
+                    if status_callback is not None:
+                        for msg in msgs[:3]:
+                            status_callback(role, "running", f"Peer call {msg} -> {role}")
                     peer_prompt = (
                         "Peer agents requested follow-up specialization. "
                         f"Address these requests for role={role} and refine your output.\n\n"
