@@ -84,7 +84,7 @@ HTML = """<!doctype html>
       grid-template-columns: repeat(3, minmax(300px, 1fr));
       grid-template-areas:
         "planner coder load"
-        "debugger coordinator load"
+        "debugger coordinator validator"
         "overall overall uart"
         "overall overall tracker";
       gap: 12px;
@@ -118,10 +118,11 @@ HTML = """<!doctype html>
     .area-debugger { grid-area: debugger; }
     .area-coordinator { grid-area: coordinator; }
     .area-load { grid-area: load; }
+    .area-validator { grid-area: validator; }
     .area-overall { grid-area: overall; min-height: 350px; }
     .area-uart { grid-area: uart; }
     .area-tracker { grid-area: tracker; }
-    .area-load { min-height: 350px; }
+    .area-load { min-height: 180px; }
     .chart-grid {
       display: grid;
       gap: 8px;
@@ -157,6 +158,7 @@ HTML = """<!doctype html>
           "planner coder"
           "debugger coordinator"
           "load load"
+          "validator validator"
           "overall overall"
           "uart tracker";
       }
@@ -170,6 +172,7 @@ HTML = """<!doctype html>
           "debugger"
           "coordinator"
           "load"
+          "validator"
           "overall"
           "uart"
           "tracker";
@@ -268,7 +271,10 @@ HTML = """<!doctype html>
           <div class=\"chart-row\"><div>Verifier</div><div class=\"bar-wrap\"><div id=\"bar_verifier\" class=\"bar-fill\"></div></div><div id=\"pct_verifier\">0.0%</div></div>
         </div>
         <div id=\"chart_meta\" class=\"meta\"></div>
-        <div class=\"meta\" style=\"margin-top:8px;\">Verifier</div>
+      </article>
+      <article class=\"card area-validator\">
+        <h3>Validator</h3>
+        <div class=\"meta\">Independent confidence and acceptance check.</div>
         <div id=\"verifier_status\" class=\"agent-status\">idle</div>
         <div id=\"verifier_task\" class=\"meta\">Waiting for merged output.</div>
         <pre id=\"verifier_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
