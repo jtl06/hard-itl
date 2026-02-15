@@ -165,3 +165,8 @@ In dashboard (`make gui`), set:
 - `Target Baud = <your value, e.g. 76200>`
 
 Then click `Start Run`. The run tracker will show `guess` vs `target` progression.
+
+Additional interactive cases:
+- `framing_hunt` (target frame: `8N1`, `7E1`, `8E1`)
+- `parity_hunt` (target parity: `none`, `even`, `odd`)
+- `signature_check` (target magic hex, semantic `MAGIC/CRC` validation)

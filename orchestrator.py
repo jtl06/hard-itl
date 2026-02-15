@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,14 +41,12 @@ def parse_config(path: str = "config.yaml") -> dict[str, Any]:
 
         if val.lower() in {"true", "false"}:
             parsed: Any = val.lower() == "true"
+        elif re.fullmatch(r"[+-]?\d+", val):
+            parsed = int(val)
+        elif re.fullmatch(r"[+-]?(?:\d+\.\d*|\d*\.\d+)", val):
+            parsed = float(val)
         else:
-            try:
-                parsed = int(val)
-            except ValueError:
-                try:
-                    parsed = float(val)
-                except ValueError:
-                    parsed = val.strip('"')
+            parsed = val.strip('"')
         current[key] = parsed
 
     return data
@@ -65,6 +64,9 @@ def run_case(
     trace: bool = False,
     verbose: bool = False,
     target_baud: int = 0,
+    target_frame: str = "",
+    target_parity: str = "",
+    target_magic: str = "",
 ) -> list[dict[str, Any]]:
     cfg = parse_config("config.yaml")
     nim_cfg = cfg.get("nim", {})
@@ -104,6 +106,28 @@ def run_case(
             "guess_baud": int(case_cfg.get("initial_guess_baud", 57600)),
             "target_baud": selected_target,
         }
+    elif case_id == "framing_hunt":
+        selected_target_frame = target_frame or str(case_cfg.get("target_frame", "8N1"))
+        params = {
+            "guess_frame": str(case_cfg.get("initial_guess_frame", "7E1")),
+            "target_frame": selected_target_frame,
+        }
+    elif case_id == "parity_hunt":
+        selected_target_parity = target_parity or str(case_cfg.get("target_parity", "even"))
+        params = {
+            "guess_parity": str(case_cfg.get("initial_guess_parity", "none")),
+            "target_parity": selected_target_parity,
+        }
+    elif case_id == "signature_check":
+        default_target_magic = int(case_cfg.get("target_magic", 0xC0FFEE42))
+        if target_magic:
+            parsed_target_magic = int(target_magic, 0)
+        else:
+            parsed_target_magic = default_target_magic
+        params = {
+            "guess_magic": int(case_cfg.get("initial_guess_magic", 0x0BADF00D)),
+            "target_magic": parsed_target_magic,
+        }
     if not case_cfg:
         params = planner.initial_request()
 
@@ -113,6 +137,8 @@ def run_case(
         _write_state(state_path, state)
 
     rows: list[dict[str, Any]] = []
+    solved = False
+    solved_run = 0
     for run_index in range(1, runs + 1):
         _set_overall(state, status="running", message=f"Running {run_index}/{runs}", current_run=run_index)
         _set_agent(
@@ -248,10 +274,12 @@ def run_case(
                 "run": run_index,
                 "run_id": run_result["run_id"],
                 "status": analysis.pass_fail,
-                "guess_baud": int(params.get("guess_baud", 0)),
-                "target_baud": int(params.get("target_baud", 0)),
-                "uart_rate": int(params.get("uart_rate", 0)),
-                "buffer_size": int(params.get("buffer_size", 0)),
+                "guess_key": _guess_key(params) or "",
+                "target_key": _target_key_for_guess(_guess_key(params) or "") or "",
+                "guess_value": _guess_value(params),
+                "target_value": _target_value(params),
+                "uart_rate": int(params.get("uart_rate", 0)) if "uart_rate" in params else 0,
+                "buffer_size": int(params.get("buffer_size", 0)) if "buffer_size" in params else 0,
                 "error_count": analysis.metrics["error_count"],
                 "run_dir": run_result["run_dir"],
             }
@@ -274,10 +302,12 @@ def run_case(
             "run": run_index,
             "run_id": run_result["run_id"],
             "status": analysis.pass_fail,
-            "guess_baud": int(params.get("guess_baud", 0)),
-            "target_baud": int(params.get("target_baud", 0)),
-            "uart_rate": int(params.get("uart_rate", 0)),
-            "buffer_size": int(params.get("buffer_size", 0)),
+            "guess_key": _guess_key(params) or "",
+            "target_key": _target_key_for_guess(_guess_key(params) or "") or "",
+            "guess_value": _guess_value(params),
+            "target_value": _target_value(params),
+            "uart_rate": int(params.get("uart_rate", 0)) if "uart_rate" in params else 0,
+            "buffer_size": int(params.get("buffer_size", 0)) if "buffer_size" in params else 0,
             "error_count": analysis.metrics["error_count"],
             "run_dir": run_result["run_dir"],
             "diagnostics": run_result.get("diagnostics", []),
@@ -294,14 +324,31 @@ def run_case(
             if state_path is not None:
                 _write_state(state_path, state)
 
+        if analysis.pass_fail == "pass":
+            solved = True
+            solved_run = run_index
+            _set_overall(
+                state,
+                status="completed",
+                message=f"successful: converged at run {run_index}",
+                current_run=run_index,
+            )
+            if state_path is not None:
+                _write_state(state_path, state)
+            if live or verbose:
+                print(f"[result] successful at run {run_index}; stopping early")
+            break
+
         if analysis.pass_fail != "pass" and nim_next_experiments:
-            if "guess_baud" in params:
-                baud_candidates = [x for x in nim_next_experiments if "guess_baud" in x]
-                if baud_candidates:
-                    params = {
-                        "guess_baud": int(baud_candidates[0]["guess_baud"]),
-                        "target_baud": int(baud_candidates[0].get("target_baud", params.get("target_baud", 115200))),
-                    }
+            guess_key = _guess_key(params)
+            if guess_key:
+                match = [x for x in nim_next_experiments if guess_key in x]
+                if match:
+                    chosen = dict(match[0])
+                    target_key = _target_key_for_guess(guess_key)
+                    if target_key and target_key not in chosen and target_key in params:
+                        chosen[target_key] = params[target_key]
+                    params = chosen
                 else:
                     params = planner.next_request(params, analysis=analysis, triage=triage)
             else:
@@ -309,7 +356,9 @@ def run_case(
         else:
             params = planner.next_request(params, analysis=analysis, triage=triage)
 
-    _set_overall(state, status="completed", message="Run sequence complete", current_run=runs)
+    final_run = solved_run if solved else len(rows)
+    final_msg = f"successful: converged at run {solved_run}" if solved else "Run sequence complete"
+    _set_overall(state, status="completed", message=final_msg, current_run=final_run)
     for role in ("planner", "coder", "critic", "summarizer"):
         if state["agents"][role]["status"] == "running":
             _set_agent(
@@ -525,15 +574,17 @@ def _print_live_run_details(
 
 
 def print_summary(rows: list[dict[str, Any]]) -> None:
-    baud_mode = any(int(r.get("guess_baud", 0)) > 0 for r in rows)
-    if baud_mode:
-        print("run | status | guess_baud | target_baud | errors | run_id")
+    guess_mode = any(str(r.get("guess_key", "")) != "" for r in rows)
+    if guess_mode:
+        print("run | status | guess | target | errors | run_id")
         print("-" * 76)
         for r in rows:
             print(
-                f"{r['run']:>3} | {r['status']:<6} | {r['guess_baud']:<10} | "
-                f"{r['target_baud']:<11} | {r['error_count']:<6} | {r['run_id']}"
+                f"{r['run']:>3} | {r['status']:<6} | {str(r.get('guess_value','')):<10} | "
+                f"{str(r.get('target_value','')):<11} | {r['error_count']:<6} | {r['run_id']}"
             )
+        if rows and rows[-1]["status"] == "pass":
+            print("successful")
         return
     print("run | status | uart_rate | buffer_size | errors | run_id")
     print("-" * 72)
@@ -542,6 +593,38 @@ def print_summary(rows: list[dict[str, Any]]) -> None:
             f"{r['run']:>3} | {r['status']:<6} | {r['uart_rate']:<9} | "
             f"{r['buffer_size']:<11} | {r['error_count']:<6} | {r['run_id']}"
         )
+    if rows and rows[-1]["status"] == "pass":
+        print("successful")
+
+
+def _guess_key(params: dict[str, Any]) -> str | None:
+    for k in ("guess_baud", "guess_frame", "guess_parity", "guess_magic"):
+        if k in params:
+            return k
+    return None
+
+
+def _target_key_for_guess(guess_key: str) -> str | None:
+    mapping = {
+        "guess_baud": "target_baud",
+        "guess_frame": "target_frame",
+        "guess_parity": "target_parity",
+        "guess_magic": "target_magic",
+    }
+    return mapping.get(guess_key)
+
+
+def _guess_value(params: dict[str, Any]) -> Any:
+    g = _guess_key(params)
+    return params.get(g, "") if g else ""
+
+
+def _target_value(params: dict[str, Any]) -> Any:
+    g = _guess_key(params)
+    if not g:
+        return ""
+    t = _target_key_for_guess(g)
+    return params.get(t, "") if t else ""
 
 
 def main() -> None:
@@ -562,6 +645,9 @@ def main() -> None:
     parser.add_argument("--verbose", action="store_true", help="Enable all live CLI output")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--target-baud", type=int, default=0, help="Target baud for uart_demo baud-hunt mode")
+    parser.add_argument("--target-frame", default="", help="Target frame (e.g. 8N1) for framing_hunt")
+    parser.add_argument("--target-parity", default="", help="Target parity (none/even/odd) for parity_hunt")
+    parser.add_argument("--target-magic", default="", help="Target magic hex (e.g. 0xC0FFEE42) for signature_check")
     args = parser.parse_args()
 
     try:
@@ -577,6 +663,9 @@ def main() -> None:
             trace=args.trace,
             verbose=args.verbose,
             target_baud=args.target_baud,
+            target_frame=args.target_frame,
+            target_parity=args.target_parity,
+            target_magic=args.target_magic,
         )
     except FlashError as exc:
         if args.state_file:

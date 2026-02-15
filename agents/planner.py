@@ -32,6 +32,30 @@ class PlannerAgent:
             else:
                 guess = max(target, guess // 2)
             return {"guess_baud": guess, "target_baud": target}
+        if "guess_frame" in previous_params:
+            if triage.next_experiments:
+                nxt = triage.next_experiments[0]
+                return {
+                    "guess_frame": str(nxt.get("guess_frame", previous_params["guess_frame"])),
+                    "target_frame": str(nxt.get("target_frame", previous_params.get("target_frame", "8N1"))),
+                }
+            return previous_params
+        if "guess_parity" in previous_params:
+            if triage.next_experiments:
+                nxt = triage.next_experiments[0]
+                return {
+                    "guess_parity": str(nxt.get("guess_parity", previous_params["guess_parity"])),
+                    "target_parity": str(nxt.get("target_parity", previous_params.get("target_parity", "none"))),
+                }
+            return previous_params
+        if "guess_magic" in previous_params:
+            if triage.next_experiments:
+                nxt = triage.next_experiments[0]
+                return {
+                    "guess_magic": int(nxt.get("guess_magic", previous_params["guess_magic"])),
+                    "target_magic": int(nxt.get("target_magic", previous_params.get("target_magic", 0xC0FFEE42))),
+                }
+            return previous_params
 
         if triage.next_experiments:
             # Pick the first triage candidate and keep deterministic progression.

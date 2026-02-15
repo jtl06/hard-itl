@@ -22,3 +22,12 @@ cases:
   uart_demo:
     initial_guess_baud: 57600
     target_baud: 115200
+  framing_hunt:
+    initial_guess_frame: 7E1
+    target_frame: 8N1
+  parity_hunt:
+    initial_guess_parity: none
+    target_parity: even
+  signature_check:
+    initial_guess_magic: 195948557
+    target_magic: 3237998146

@@ -5,6 +5,7 @@ import os
 import select
 import subprocess
 import time
+import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -203,6 +204,27 @@ def _simulate_mock_uart(
             line_callback=line_callback,
             emulate_timing=emulate_timing,
         )
+    if "guess_frame" in params:
+        return _simulate_mock_frame_hunt(
+            run_id=run_id,
+            params=params,
+            line_callback=line_callback,
+            emulate_timing=emulate_timing,
+        )
+    if "guess_parity" in params:
+        return _simulate_mock_parity_hunt(
+            run_id=run_id,
+            params=params,
+            line_callback=line_callback,
+            emulate_timing=emulate_timing,
+        )
+    if "guess_magic" in params:
+        return _simulate_mock_signature_check(
+            run_id=run_id,
+            params=params,
+            line_callback=line_callback,
+            emulate_timing=emulate_timing,
+        )
 
     uart_rate = int(params.get("uart_rate", 1000000))
     buffer_size = int(params.get("buffer_size", 16))
@@ -311,3 +333,129 @@ def _simulate_mock_baud_hunt(
             line_callback(line)
 
     return lines, passed, note
+
+
+def _simulate_mock_frame_hunt(
+    run_id: str,
+    params: dict[str, Any],
+    line_callback: Callable[[str], None] | None = None,
+    emulate_timing: bool = False,
+) -> tuple[list[str], bool, str]:
+    guess = str(params.get("guess_frame", "8N1"))
+    target = str(params.get("target_frame", "8N1"))
+    t0 = datetime.now(timezone.utc)
+    lines = [
+        f"{_iso(t0)} RUN_START {run_id}",
+        f"{_iso(t0 + timedelta(milliseconds=5))} INFO cfg guess_frame={guess}",
+        f"{_iso(t0 + timedelta(milliseconds=12))} INFO tx FRAME_PROBE",
+    ]
+    if guess == target:
+        lines.extend(
+            [
+                f"{_iso(t0 + timedelta(milliseconds=20))} INFO rx FRAME_OK",
+                f"{_iso(t0 + timedelta(milliseconds=28))} INFO test_result PASS",
+                f"{_iso(t0 + timedelta(milliseconds=36))} RUN_END {run_id}",
+            ]
+        )
+        passed = True
+        note = "mock pass: frame guess matches target"
+    else:
+        lines.extend(
+            [
+                f"{_iso(t0 + timedelta(milliseconds=20))} ERROR FRAME_MISMATCH guessed={guess}",
+                f"{_iso(t0 + timedelta(milliseconds=30))} INFO test_result FAIL",
+                f"{_iso(t0 + timedelta(milliseconds=40))} RUN_END {run_id}",
+            ]
+        )
+        passed = False
+        note = "mock fail: frame mismatch"
+    _emit_lines(lines, line_callback, emulate_timing)
+    return lines, passed, note
+
+
+def _simulate_mock_parity_hunt(
+    run_id: str,
+    params: dict[str, Any],
+    line_callback: Callable[[str], None] | None = None,
+    emulate_timing: bool = False,
+) -> tuple[list[str], bool, str]:
+    guess = str(params.get("guess_parity", "none"))
+    target = str(params.get("target_parity", "none"))
+    t0 = datetime.now(timezone.utc)
+    lines = [
+        f"{_iso(t0)} RUN_START {run_id}",
+        f"{_iso(t0 + timedelta(milliseconds=5))} INFO cfg guess_parity={guess}",
+        f"{_iso(t0 + timedelta(milliseconds=12))} INFO tx PARITY_PROBE",
+    ]
+    if guess == target:
+        lines.extend(
+            [
+                f"{_iso(t0 + timedelta(milliseconds=20))} INFO rx PARITY_OK",
+                f"{_iso(t0 + timedelta(milliseconds=28))} INFO test_result PASS",
+                f"{_iso(t0 + timedelta(milliseconds=36))} RUN_END {run_id}",
+            ]
+        )
+        passed = True
+        note = "mock pass: parity guess matches target"
+    else:
+        lines.extend(
+            [
+                f"{_iso(t0 + timedelta(milliseconds=20))} ERROR PARITY_MISMATCH guessed={guess}",
+                f"{_iso(t0 + timedelta(milliseconds=30))} INFO test_result FAIL",
+                f"{_iso(t0 + timedelta(milliseconds=40))} RUN_END {run_id}",
+            ]
+        )
+        passed = False
+        note = "mock fail: parity mismatch"
+    _emit_lines(lines, line_callback, emulate_timing)
+    return lines, passed, note
+
+
+def _simulate_mock_signature_check(
+    run_id: str,
+    params: dict[str, Any],
+    line_callback: Callable[[str], None] | None = None,
+    emulate_timing: bool = False,
+) -> tuple[list[str], bool, str]:
+    guess = int(params.get("guess_magic", 0xC0FFEE42))
+    target = int(params.get("target_magic", 0xC0FFEE42))
+    payload = "PING_SEQ_001"
+    crc = zlib.crc32(f"{payload}|0x{guess:08X}".encode()) & 0xFFFFFFFF
+    t0 = datetime.now(timezone.utc)
+    lines = [
+        f"{_iso(t0)} RUN_START {run_id}",
+        f"{_iso(t0 + timedelta(milliseconds=5))} INFO payload={payload}",
+        f"{_iso(t0 + timedelta(milliseconds=12))} MAGIC=0x{guess:08X}",
+        f"{_iso(t0 + timedelta(milliseconds=20))} CRC=0x{crc:08X}",
+    ]
+    if guess == target:
+        lines.append(f"{_iso(t0 + timedelta(milliseconds=28))} INFO signature_match")
+        passed = True
+        note = "mock pass: signature check matched"
+    else:
+        # No explicit ERROR line: analyst must detect semantic mismatch.
+        lines.append(f"{_iso(t0 + timedelta(milliseconds=28))} INFO signature_needs_review")
+        passed = False
+        note = "mock fail: signature mismatch"
+    lines.append(f"{_iso(t0 + timedelta(milliseconds=36))} RUN_END {run_id}")
+    _emit_lines(lines, line_callback, emulate_timing)
+    return lines, passed, note
+
+
+def _emit_lines(
+    lines: list[str],
+    line_callback: Callable[[str], None] | None,
+    emulate_timing: bool,
+) -> None:
+    if line_callback is None:
+        return
+    prev_ts: datetime | None = None
+    for line in lines:
+        if emulate_timing:
+            ts = _parse_prefix_timestamp(line)
+            if ts is not None and prev_ts is not None:
+                dt = (ts - prev_ts).total_seconds()
+                if dt > 0:
+                    time.sleep(min(dt, 0.2))
+            prev_ts = ts if ts is not None else prev_ts
+        line_callback(line)

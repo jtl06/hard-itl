@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import zlib
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +13,8 @@ class AnalystAgent:
     def analyze(self, run_dir: Path) -> AnalysisResult:
         uart_path = run_dir / "uart.log"
         lines = [ln.strip() for ln in uart_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+        params = manifest.get("params", {})
 
         key_events: list[dict[str, str | int]] = []
         ts_values: list[datetime] = []
@@ -43,7 +47,11 @@ class AnalystAgent:
 
         max_gap_ms = self._max_gap_ms(ts_values)
         lines_per_sec = self._lines_per_sec(lines_count=len(lines), ts_values=ts_values)
+        signature_valid = self._validate_signature(lines, params)
+        signature_required = "target_magic" in params
         pass_fail = "pass" if has_start and has_end and error_count == 0 else "fail"
+        if signature_required and not signature_valid:
+            pass_fail = "fail"
 
         metrics = {
             "error_count": error_count,
@@ -53,6 +61,7 @@ class AnalystAgent:
             "max_gap_ms": max_gap_ms,
             "last_error_code": last_error_code,
             "uart_line_count": len(lines),
+            "signature_valid": signature_valid,
         }
 
         result = AnalysisResult(pass_fail=pass_fail, metrics=metrics, key_events=key_events)
@@ -95,3 +104,28 @@ class AnalystAgent:
         if dur_s <= 0:
             return float(lines_count)
         return round(lines_count / dur_s, 3)
+
+    @staticmethod
+    def _validate_signature(lines: list[str], params: dict) -> bool:
+        if "target_magic" not in params:
+            return True
+
+        payload = None
+        magic = None
+        crc = None
+        for line in lines:
+            if "payload=" in line:
+                payload = line.split("payload=", 1)[-1].strip()
+            m_magic = re.search(r"MAGIC=0x([0-9A-Fa-f]{8})", line)
+            if m_magic:
+                magic = int(m_magic.group(1), 16)
+            m_crc = re.search(r"CRC=0x([0-9A-Fa-f]{8})", line)
+            if m_crc:
+                crc = int(m_crc.group(1), 16)
+
+        if payload is None or magic is None or crc is None:
+            return False
+
+        target_magic = int(params.get("target_magic", 0))
+        expected_crc = zlib.crc32(f"{payload}|0x{target_magic:08X}".encode()) & 0xFFFFFFFF
+        return magic == target_magic and crc == expected_crc

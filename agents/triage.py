@@ -71,6 +71,23 @@ class TriageAgent:
                 {"guess_baud": target, "target_baud": target},
                 {"guess_baud": nxt, "target_baud": target},
             ]
+        if "guess_frame" in params:
+            target = str(params.get("target_frame", "8N1"))
+            return [
+                {"guess_frame": target, "target_frame": target},
+                {"guess_frame": "8N1", "target_frame": target},
+            ]
+        if "guess_parity" in params:
+            target = str(params.get("target_parity", "none"))
+            return [
+                {"guess_parity": target, "target_parity": target},
+                {"guess_parity": "none", "target_parity": target},
+            ]
+        if "guess_magic" in params:
+            target = int(params.get("target_magic", 0xC0FFEE42))
+            return [
+                {"guess_magic": target, "target_magic": target},
+            ]
 
         uart_rate = int(params.get("uart_rate", 1000000))
         buffer_size = int(params.get("buffer_size", 16))

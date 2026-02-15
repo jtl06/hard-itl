@@ -151,9 +151,31 @@ HTML = """<!doctype html>
       </div>
       <div class=\"progress-wrap\"><div id=\"progress_bar\" class=\"progress-bar\"></div></div>
       <div class=\"row\">
-        <label>Case <input id=\"case\" value=\"uart_demo\"></label>
+        <label>Case
+          <select id=\"case\">
+            <option value=\"uart_demo\">uart_demo (baud hunt)</option>
+            <option value=\"framing_hunt\">framing_hunt</option>
+            <option value=\"parity_hunt\">parity_hunt</option>
+            <option value=\"signature_check\">signature_check</option>
+          </select>
+        </label>
         <label>Runs <input id=\"runs\" type=\"number\" value=\"8\" min=\"1\" max=\"100\"></label>
         <label>Target Baud <input id=\"target_baud\" type=\"number\" value=\"76200\" min=\"1200\" step=\"1\"></label>
+        <label>Target Frame
+          <select id=\"target_frame\">
+            <option value=\"8N1\">8N1</option>
+            <option value=\"7E1\">7E1</option>
+            <option value=\"8E1\">8E1</option>
+          </select>
+        </label>
+        <label>Target Parity
+          <select id=\"target_parity\">
+            <option value=\"none\">none</option>
+            <option value=\"even\">even</option>
+            <option value=\"odd\">odd</option>
+          </select>
+        </label>
+        <label>Target Magic <input id=\"target_magic\" value=\"0xC0FFEE42\"></label>
         <label>Mode
           <select id=\"mode\"><option value=\"mock\">mock</option><option value=\"real\">real</option></select>
         </label>
@@ -230,6 +252,9 @@ async function startRun() {
       case: document.getElementById('case').value,
       runs: Number(document.getElementById('runs').value || 8),
       target_baud: Number(document.getElementById('target_baud').value || 0),
+      target_frame: document.getElementById('target_frame').value,
+      target_parity: document.getElementById('target_parity').value,
+      target_magic: document.getElementById('target_magic').value,
       mode: document.getElementById('mode').value,
     };
     const res = await fetch('/api/run', {
@@ -294,8 +319,8 @@ function renderStateBundle(bundle) {
   setText('overall_output', state.overall_output || 'No output yet. Start a run to populate summarizer output.');
   setText('latest_uart', (state.latest_uart || []).join('\\n') || 'No UART lines yet.');
   const history = (state.history || []).map(r =>
-    (Number(r.guess_baud || 0) > 0)
-      ? `run ${r.run}: ${String(r.status || '').toUpperCase()}  guess=${r.guess_baud}  target=${r.target_baud}  errors=${r.error_count}  id=${r.run_id}`
+    (String(r.guess_key || '') !== '')
+      ? `run ${r.run}: ${String(r.status || '').toUpperCase()}  guess=${r.guess_value}  target=${r.target_value}  errors=${r.error_count}  id=${r.run_id}`
       : `run ${r.run}: ${String(r.status || '').toUpperCase()}  rate=${r.uart_rate}  buf=${r.buffer_size}  errors=${r.error_count}  id=${r.run_id}`
   ).join('\\n');
   setText('history', history || 'No runs yet.');
@@ -405,6 +430,9 @@ class Handler(BaseHTTPRequestHandler):
             runs = int(payload.get("runs", 8))
             mode = str(payload.get("mode", "mock"))
             target_baud = int(payload.get("target_baud", 0))
+            target_frame = str(payload.get("target_frame", ""))
+            target_parity = str(payload.get("target_parity", ""))
+            target_magic = str(payload.get("target_magic", ""))
 
             with LOCK:
                 global PROCESS
@@ -447,6 +475,12 @@ class Handler(BaseHTTPRequestHandler):
                 mode,
                 "--target-baud",
                 str(target_baud),
+                "--target-frame",
+                target_frame,
+                "--target-parity",
+                target_parity,
+                "--target-magic",
+                target_magic,
                 "--state-file",
                 str(STATE_PATH),
                     "--live-uart",
