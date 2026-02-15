@@ -38,6 +38,7 @@ class NIMOrchestrator:
             "planner": float(os.getenv("NIM_MIN_RUNNING_PLANNER_S", "0.45")),
             "coder": float(os.getenv("NIM_MIN_RUNNING_CODER_S", "0.65")),
             "critic": float(os.getenv("NIM_MIN_RUNNING_CRITIC_S", "0.8")),
+            "verifier": float(os.getenv("NIM_MIN_RUNNING_VERIFIER_S", "0.6")),
             "summarizer": float(os.getenv("NIM_MIN_RUNNING_SUMMARIZER_S", "0.55")),
         }
         self.last_fanout: list[AgentOutput] = []
@@ -52,6 +53,7 @@ class NIMOrchestrator:
                 AgentOutput("planner", "Fallback: run uart_rate=230400,buffer_size=64 then 115200/128."),
                 AgentOutput("coder", "Fallback: ensure timestamped UART lines and explicit ERROR codes."),
                 AgentOutput("critic", "Fallback: keep hardware access constrained to runner module."),
+                AgentOutput("verifier", "Fallback: confidence=0.42 because RUN_END and marker quality remain unstable."),
             ]
             if status_callback is not None:
                 status_callback("planner", "running", "Planning next experiments from UART evidence.")
@@ -59,10 +61,12 @@ class NIMOrchestrator:
                 status_callback("coder", "running", "Drafting minimal instrumentation improvements.")
                 await asyncio.sleep(0.2)
                 status_callback("critic", "running", "Reviewing feasibility and runner-only constraints.")
-                await asyncio.sleep(0.55)
+                await asyncio.sleep(0.35)
+                status_callback("verifier", "running", "Scoring evidence quality and confidence.")
+                await asyncio.sleep(0.2)
                 for item in self.last_fanout:
                     status_callback(item.role, "fallback", item.text)
-                status_callback("summarizer", "running", "Merging planner/coder/debugger updates.")
+                status_callback("summarizer", "running", "Merging planner/coder/debugger/verifier updates.")
                 await asyncio.sleep(0.4)
                 status_callback("summarizer", "fallback", "Using deterministic fallback summary.")
             return self._fallback_summary("aiohttp missing", user_prompt)
@@ -79,14 +83,19 @@ class NIMOrchestrator:
             "You are critic agent. Review feasibility and risk. "
             "Enforce runner-only hardware access and UART-only truth layer assumptions."
         )
+        verifier_prompt = (
+            "You are verifier agent. Judge evidence quality and confidence from UART-only data. "
+            "Return a concise verdict with confidence in [0,1], blockers, and acceptance criteria."
+        )
         summarizer_prompt = (
-            "You are summarizer agent. Merge planner/coder/critic outputs into one actionable runbook. "
-            "Sections: next_experiments, instrumentation, risks, demo_guidance."
+            "You are summarizer agent. Merge planner/coder/critic/verifier outputs into one actionable runbook. "
+            "Sections: next_experiments, instrumentation, risks, verification, demo_guidance."
         )
         prompt_by_role = {
             "planner": planner_prompt,
             "coder": coder_prompt,
             "critic": critic_prompt,
+            "verifier": verifier_prompt,
         }
 
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout_s)) as session:
@@ -96,9 +105,10 @@ class NIMOrchestrator:
                     self._call_agent(session, "planner", planner_prompt, user_prompt, status_callback),
                     self._call_agent(session, "coder", coder_prompt, user_prompt, status_callback),
                     self._call_agent(session, "critic", critic_prompt, user_prompt, status_callback),
+                    self._call_agent(session, "verifier", verifier_prompt, user_prompt, status_callback),
                 ]
                 fanout_results = await asyncio.gather(*tasks, return_exceptions=True)
-                for role, item in zip(["planner", "coder", "critic"], fanout_results):
+                for role, item in zip(["planner", "coder", "critic", "verifier"], fanout_results):
                     if isinstance(item, Exception):
                         normalized.append(AgentOutput(role=role, text=f"{role} unavailable: {item}"))
                         if status_callback is not None:
@@ -110,6 +120,7 @@ class NIMOrchestrator:
                     ("planner", planner_prompt),
                     ("coder", coder_prompt),
                     ("critic", critic_prompt),
+                    ("verifier", verifier_prompt),
                 ):
                     try:
                         item = await self._call_agent(session, role, prompt, user_prompt, status_callback)
@@ -194,13 +205,17 @@ class NIMOrchestrator:
 
     @staticmethod
     def _collect_peer_messages(outputs: list[AgentOutput]) -> dict[str, list[str]]:
-        inbox: dict[str, list[str]] = {"planner": [], "coder": [], "critic": []}
+        inbox: dict[str, list[str]] = {"planner": [], "coder": [], "critic": [], "verifier": []}
         for item in outputs:
             for raw in item.text.splitlines():
                 line = raw.strip()
                 if not line:
                     continue
-                match = re.match(r"^(?:@|CALL\s+)(planner|coder|critic)\s*:\s*(.+)$", line, flags=re.IGNORECASE)
+                match = re.match(
+                    r"^(?:@|CALL\s+)(planner|coder|critic|verifier)\s*:\s*(.+)$",
+                    line,
+                    flags=re.IGNORECASE,
+                )
                 if not match:
                     continue
                 role = match.group(1).lower()
@@ -286,7 +301,7 @@ async def _amain(prompt: str) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="4-agent async NIM orchestrator")
+    parser = argparse.ArgumentParser(description="5-agent async NIM orchestrator")
     parser.add_argument("--prompt", required=True)
     args = parser.parse_args()
 

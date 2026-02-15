@@ -180,6 +180,13 @@ def run_case(
             "Waiting for fan-in",
             _reasoning_summary(state, "summarizer", "idle", "awaiting fan-in"),
         )
+        _set_agent(
+            state,
+            "verifier",
+            "idle",
+            "Waiting for merged proposal",
+            _reasoning_summary(state, "verifier", "idle", "awaiting merged proposal"),
+        )
         if state_path is not None:
             _write_state(state_path, state)
         if live or verbose:
@@ -242,6 +249,13 @@ def run_case(
             "Waiting for coder/debugger outputs",
             _reasoning_summary(state, "summarizer", "idle", "awaiting coder/debugger completion"),
         )
+        _set_agent(
+            state,
+            "verifier",
+            "idle",
+            "Waiting for merged proposal",
+            _reasoning_summary(state, "verifier", "idle", "awaiting merged proposal"),
+        )
         if state_path is not None:
             _write_state(state_path, state)
 
@@ -283,6 +297,13 @@ def run_case(
             "done",
             "Merged runbook ready",
             _reasoning_summary(state, "summarizer", "done", "merged output ready"),
+        )
+        _set_agent(
+            state,
+            "verifier",
+            "done",
+            "Confidence verdict ready",
+            _reasoning_summary(state, "verifier", "done", "verdict published"),
         )
         state["history"].append(
             {
@@ -374,7 +395,7 @@ def run_case(
     final_run = solved_run if solved else len(rows)
     final_msg = f"successful: converged at run {solved_run}" if solved else "Run sequence complete"
     _set_overall(state, status="completed", message=final_msg, current_run=final_run)
-    for role in ("planner", "coder", "critic", "summarizer"):
+    for role in ("planner", "coder", "critic", "summarizer", "verifier"):
         if state["agents"][role]["status"] == "running":
             _set_agent(
                 state,
@@ -399,7 +420,7 @@ def _nim_guidance(
 ) -> str:
     if nim_orchestrator is None:
         if status_updater is not None:
-            for role in ("planner", "coder", "critic", "summarizer"):
+            for role in ("planner", "coder", "critic", "summarizer", "verifier"):
                 status_updater(role, "disabled", "NIM orchestration disabled.")
         return "NIM orchestration disabled via config."
 
@@ -410,7 +431,7 @@ def _nim_guidance(
         "Evidence files: uart.log, analysis.json, triage.md. "
         f"metrics={analysis.metrics} key_events={analysis.key_events} "
         f"triage_next_experiments={triage.next_experiments} triage_fix={triage.suggested_fix}. "
-        "Generate next experiments, minimal instrumentation suggestions, risk review, and merged demo guidance."
+        "Generate next experiments, minimal instrumentation suggestions, risk review, verifier confidence, and merged demo guidance."
     )
     try:
         return asyncio.run(nim_orchestrator.run(prompt, status_callback=status_updater))
@@ -438,12 +459,14 @@ def _init_state(case_id: str, runs: int, mode: str) -> dict[str, Any]:
             "coder": {"status": "idle", "task": "Waiting", "fragment": "", "updated_at": now},
             "critic": {"status": "idle", "task": "Waiting", "fragment": "", "updated_at": now},
             "summarizer": {"status": "idle", "task": "Waiting", "fragment": "", "updated_at": now},
+            "verifier": {"status": "idle", "task": "Waiting", "fragment": "", "updated_at": now},
         },
         "agent_metrics": {
             "planner": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": now_epoch},
             "coder": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": now_epoch},
             "critic": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": now_epoch},
             "summarizer": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": now_epoch},
+            "verifier": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": now_epoch},
         },
         "latest_uart": [],
         "agent_calls": [],
@@ -511,9 +534,10 @@ def _nim_status_update(
         "coder": "Drafting instrumentation suggestions",
         "critic": "Reviewing risk and feasibility",
         "summarizer": "Coordinating merged runbook",
+        "verifier": "Scoring confidence from evidence",
     }
     _set_agent(state, role, status, task_map.get(role, role.title()), reasoning)
-    if trace_to_stdout and role in {"planner", "critic", "summarizer"}:
+    if trace_to_stdout and role in {"planner", "critic", "summarizer", "verifier"}:
         print(f"[{role}] {reasoning}")
     if state_path is not None:
         _write_state(state_path, state)
@@ -531,12 +555,14 @@ def _reasoning_summary(state: dict[str, Any], role: str, status: str, message: s
         "coder": "instrumentation gap may hide run boundary or error details",
         "critic": "proposed change may violate runner-only hardware boundaries",
         "summarizer": "best next step is smallest experiment that can confirm root cause",
+        "verifier": "evidence quality may be insufficient for high-confidence acceptance",
     }
     next_map = {
         "planner": "propose conservative uart_rate/buffer_size experiment",
         "coder": "suggest minimal logging/marker patch only",
         "critic": "flag feasibility/risk and request safer fallback",
         "summarizer": "merge outputs into operator runbook",
+        "verifier": "publish confidence and explicit acceptance criteria",
     }
     hyp = hypothesis_map.get(role, "root cause under review")
     nxt = next_map.get(role, "continue analysis")
@@ -663,7 +689,7 @@ def main() -> None:
     parser.add_argument(
         "--show-agent-fragments",
         action="store_true",
-        help="Print short planner/coder/critic response fragments in live mode",
+        help="Print short planner/coder/critic/verifier response fragments in live mode",
     )
     parser.add_argument("--state-file", default="", help="Write live dashboard state JSON to this path")
     parser.add_argument("--live-uart", action="store_true", help="Print UART lines live as they are captured")

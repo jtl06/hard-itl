@@ -265,10 +265,13 @@ HTML = """<!doctype html>
           <div class=\"chart-row\"><div>Coder</div><div class=\"bar-wrap\"><div id=\"bar_coder\" class=\"bar-fill\"></div></div><div id=\"pct_coder\">0.0%</div></div>
           <div class=\"chart-row\"><div>Debugger</div><div class=\"bar-wrap\"><div id=\"bar_critic\" class=\"bar-fill\"></div></div><div id=\"pct_critic\">0.0%</div></div>
           <div class=\"chart-row\"><div>Coordinator</div><div class=\"bar-wrap\"><div id=\"bar_summarizer\" class=\"bar-fill\"></div></div><div id=\"pct_summarizer\">0.0%</div></div>
+          <div class=\"chart-row\"><div>Verifier</div><div class=\"bar-wrap\"><div id=\"bar_verifier\" class=\"bar-fill\"></div></div><div id=\"pct_verifier\">0.0%</div></div>
         </div>
         <div id=\"chart_meta\" class=\"meta\"></div>
-        <div class=\"meta\" style=\"margin-top:8px;\">Agent Calls</div>
-        <pre id=\"agent_calls\">No agent calls yet.</pre>
+        <div class=\"meta\" style=\"margin-top:8px;\">Verifier</div>
+        <div id=\"verifier_status\" class=\"agent-status\">idle</div>
+        <div id=\"verifier_task\" class=\"meta\">Waiting for merged output.</div>
+        <pre id=\"verifier_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
       </article>
       <article class=\"card area-overall\">
         <h3>Overall Output</h3>
@@ -385,7 +388,7 @@ function renderStateBundle(bundle) {
   const pct = total > 0 ? Math.max(0, Math.min(100, (cur / total) * 100)) : 0;
   document.getElementById('progress_bar').style.width = `${pct}%`;
 
-  for (const name of ['planner','coder','critic','summarizer']) {
+  for (const name of ['planner','coder','critic','summarizer','verifier']) {
     const a = (state.agents || {})[name] || {};
     applyAgentStatus(`${name}_status`, a.status || 'idle');
       setText(`${name}_task`, a.task || 'Waiting for run.');
@@ -403,8 +406,6 @@ function renderStateBundle(bundle) {
     return body;
   });
   setHtml('history', historyRows.length ? historyRows.join('<br>') : 'No runs yet.');
-  setText('agent_calls', (state.agent_calls || []).slice(-12).join('\\n') || 'No agent calls yet.');
-
   const procMsg = p.running
     ? `process: running (pid=${p.pid || 'n/a'})`
     : `process: idle` + (p.exit_code !== null && p.exit_code !== undefined ? ` (last exit=${p.exit_code})` : '');
@@ -423,7 +424,7 @@ function updateTargetVisibility() {
 
 function renderAgentChart(state) {
   const m = state.agent_metrics || {};
-  const roles = ['planner', 'coder', 'critic', 'summarizer'];
+  const roles = ['planner', 'coder', 'critic', 'summarizer', 'verifier'];
   const now = Date.now() / 1000;
   const vals = {};
   let total = 0;
@@ -570,9 +571,9 @@ class Handler(BaseHTTPRequestHandler):
                         "coder": {"status": "idle", "task": "Waiting", "fragment": ""},
                         "critic": {"status": "idle", "task": "Waiting", "fragment": ""},
                         "summarizer": {"status": "idle", "task": "Waiting", "fragment": ""},
+                        "verifier": {"status": "idle", "task": "Waiting", "fragment": ""},
                     },
                     "latest_uart": [],
-                    "agent_calls": [],
                     "last_analysis": {},
                     "overall_output": "",
                     "history": [],
@@ -631,9 +632,9 @@ class Handler(BaseHTTPRequestHandler):
                     "coder": {"status": "idle", "task": "Waiting", "fragment": ""},
                     "critic": {"status": "idle", "task": "Waiting", "fragment": ""},
                     "summarizer": {"status": "idle", "task": "Waiting", "fragment": ""},
+                    "verifier": {"status": "idle", "task": "Waiting", "fragment": ""},
                 },
                 "latest_uart": [],
-                "agent_calls": [],
                 "last_analysis": {},
                 "overall_output": "",
                 "history": [],
@@ -662,15 +663,16 @@ class Handler(BaseHTTPRequestHandler):
                 "coder": {"status": "idle", "task": "Waiting", "fragment": ""},
                 "critic": {"status": "idle", "task": "Waiting", "fragment": ""},
                 "summarizer": {"status": "idle", "task": "Waiting", "fragment": ""},
+                "verifier": {"status": "idle", "task": "Waiting", "fragment": ""},
             },
             "agent_metrics": {
                 "planner": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": time.time()},
                 "coder": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": time.time()},
                 "critic": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": time.time()},
                 "summarizer": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": time.time()},
+                "verifier": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": time.time()},
             },
             "latest_uart": [],
-            "agent_calls": [],
             "last_analysis": {},
             "overall_output": "",
             "history": [],
@@ -722,9 +724,9 @@ class Handler(BaseHTTPRequestHandler):
                     "coder": {"status": "idle", "task": "", "fragment": ""},
                     "critic": {"status": "idle", "task": "", "fragment": ""},
                     "summarizer": {"status": "idle", "task": "", "fragment": ""},
+                    "verifier": {"status": "idle", "task": "", "fragment": ""},
                 },
                 "latest_uart": [],
-                "agent_calls": [],
                 "overall_output": "",
                 "history": [],
             }

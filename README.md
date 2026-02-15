@@ -6,7 +6,7 @@ Local-only multi-agent HIL pipeline. Only `runner/` touches hardware (`build`, `
 
 This project demonstrates a practical multi-agent hardware-in-the-loop workflow for embedded debugging:
 - use real UART evidence from the DUT as the single source of truth
-- run planner/coder/debugger/coordinator roles against that evidence
+- run planner/coder/debugger/coordinator plus verifier roles against that evidence
 - converge quickly on a stable, passing configuration
 
 The goal is to make hardware debugging observable and repeatable, not just ad-hoc trial-and-error.
@@ -107,7 +107,7 @@ python3 orchestrator.py --case signature_check --runs 8 --target-magic 0xC0FFEE4
 
 - `--live`: per-run diagnostics + UART tail
 - `--live-uart`: stream UART lines as captured (`[uart] ...`)
-- `--trace`: stream short agent reasoning summaries (`[planner]`, `[coder]`, `[critic]`, `[summarizer]`)
+- `--trace`: stream short agent reasoning summaries (`[planner]`, `[coder]`, `[critic]`, `[summarizer]`, `[verifier]`)
 - `--verbose`: enables all live CLI output
 - `--show-agent-fragments`: print short role output fragments in live mode
 - `--state-file <path>`: write live state JSON for dashboard
@@ -133,7 +133,7 @@ UI sections:
 - Overall Output
 - Latest UART
 - Run Tracker
-- Agent Load / Time chart (right side)
+- Agent Load / Time chart + Verifier panel (right side)
 
 Top controls:
 - `Case`, `Runs`, `Mode` (`mock`/`real`)
