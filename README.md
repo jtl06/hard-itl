@@ -56,6 +56,31 @@ Planner/agents converge to a passing config in ~6-8 runs.
 - `NIM_CHAT_URL=http://localhost:8000/v1/chat/completions`
 - `NIM_MODEL=nvidia/nemotron-nano-9b-v2`
 
+Start Nemotron 9B NIM locally (Docker + NVIDIA GPU):
+
+```bash
+export NGC_API_KEY=nvapi-...
+make nim-start
+```
+
+Stop it:
+
+```bash
+make nim-stop
+```
+
+Notes:
+- Default image: `nvcr.io/nim/nvidia/nemotron-nano-9b-v2:latest`
+- Override with env vars: `NIM_IMAGE`, `NIM_CONTAINER_NAME`, `NIM_PORT`, `NIM_CACHE_DIR`, `NIM_DETACH=1`, `NIM_PLATFORM`
+- Endpoint exposed at `http://127.0.0.1:8000/v1/chat/completions`
+
+DGX Spark (`Ubuntu 24.04`, `ARM64`) notes:
+- The start script auto-detects ARM64 and applies `NIM_PLATFORM=linux/arm64` unless overridden.
+- If your image build/tag differs, set it explicitly:
+  - `NIM_IMAGE=<your_dgx_spark_nim_image> NIM_PLATFORM=linux/arm64 make nim-start`
+- For headless usage, prefer detached mode:
+  - `NIM_DETACH=1 make nim-start`
+
 `agents/orchestrator_nim.py` implements exactly 4 async agents:
 1. planner
 2. coder

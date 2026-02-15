@@ -3,7 +3,7 @@ VENV ?= .venv
 PIP := $(VENV)/bin/pip
 PY := $(VENV)/bin/python
 
-.PHONY: venv install demo mock real demo-live demo-real gui nim-smoke clean
+.PHONY: venv install demo mock real demo-live demo-real gui nim-smoke nim-start nim-stop clean
 
 venv:
 	$(PYTHON) -m venv $(VENV)
@@ -21,6 +21,14 @@ real: demo-real
 
 nim-smoke: install
 	tools/smoke_concurrency.sh
+
+nim-start:
+	chmod +x scripts/start_nim_nemotron_9b.sh scripts/stop_nim_nemotron_9b.sh
+	./scripts/start_nim_nemotron_9b.sh
+
+nim-stop:
+	chmod +x scripts/start_nim_nemotron_9b.sh scripts/stop_nim_nemotron_9b.sh
+	./scripts/stop_nim_nemotron_9b.sh
 
 demo-live: install
 	PYTHONPATH=. $(PY) orchestrator.py --case uart_demo --runs 8 --mode mock --live --show-agent-fragments
