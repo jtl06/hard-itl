@@ -164,7 +164,7 @@ def _read_until_end_marker(
                 out.append(stamped)
                 if line_callback is not None:
                     line_callback(stamped)
-                if f"RUN_END {run_id}" in clean or clean.startswith("RUN_END "):
+                if clean == "RUN_END" or f"RUN_END {run_id}" in clean or clean.startswith("RUN_END "):
                     found_end = True
                     break
             if found_end:

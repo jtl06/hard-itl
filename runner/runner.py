@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -142,18 +143,31 @@ class Runner:
         uf2 = fw_dir / "firmware.uf2"
         if mode == "real":
             if self.config.build_cmd:
+                build_cmd = self.config.build_cmd
+                try:
+                    build_cmd = build_cmd.format(case_id=case_id)
+                except KeyError:
+                    # Keep literal command when unrelated braces are present.
+                    build_cmd = self.config.build_cmd
+                build_env = dict(os.environ)
+                if case_id == "signature_check" and "target_magic" in params:
+                    try:
+                        build_env["TARGET_MAGIC_HEX"] = hex(int(params["target_magic"]))
+                    except (TypeError, ValueError):
+                        pass
                 proc = subprocess.run(
-                    self.config.build_cmd,
+                    build_cmd,
                     cwd=self.config.build_cwd,
                     capture_output=True,
                     text=True,
                     shell=True,
+                    env=build_env,
                     check=False,
                 )
                 if proc.returncode != 0:
                     msg = (
                         "build command failed. "
-                        f"cmd='{self.config.build_cmd}' rc={proc.returncode} "
+                        f"cmd='{build_cmd}' rc={proc.returncode} "
                         f"stdout='{proc.stdout.strip()[:200]}' stderr='{proc.stderr.strip()[:200]}'"
                     )
                     raise FlashError(msg)

@@ -126,7 +126,7 @@ Real mode requires valid firmware build outputs configured in `config.yaml`:
 - optional `runner.real_elf_path`
 
 Default config uses:
-- `build_cmd: make -C firmware rp2350_uart_demo`
+- `build_cmd: make -C firmware rp2350_{case_id}`
 - `real_uf2_path: firmware/build/firmware.uf2`
 
 If `runner.real_uf2_path` is missing, orchestrator exits with configuration error.
@@ -142,16 +142,20 @@ Notes:
 - In real mode, UART data is actual DUT output; synthetic markers are not injected.
 - If firmware never prints `RUN_END`, run fails with `ERROR TIMEOUT missing RUN_END`.
 
-## Firmware target
+## Firmware targets
 
-`firmware/` contains `rp2350_uart_demo`:
+`firmware/` contains one target per demo case:
 
 ```bash
 make -C firmware rp2350_uart_demo
+make -C firmware rp2350_framing_hunt
+make -C firmware rp2350_parity_hunt
+make -C firmware rp2350_signature_check
 ```
 
 - With `PICO_SDK_PATH` set: builds real RP2350 artifacts.
 - Without `PICO_SDK_PATH`: generates placeholder artifacts so software pipeline can still run.
+- For `signature_check`, runner passes `TARGET_MAGIC_HEX` from selected target magic in real mode.
 
 ## NIM orchestration
 

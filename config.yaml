@@ -5,7 +5,7 @@ runner:
   serial_timeout_s: 8
   reenumeration_timeout_s: 10
   prefer_by_id: true
-  build_cmd: "make -C firmware rp2350_uart_demo"
+  build_cmd: "make -C firmware rp2350_{case_id}"
   build_cwd: "."
   real_elf_path: "firmware/build/firmware.elf"
   real_uf2_path: "firmware/build/firmware.uf2"
