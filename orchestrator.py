@@ -238,9 +238,9 @@ def run_case(
         _set_agent(
             state,
             "critic",
-            "running",
-            "Reviewing risk and feasibility",
-            _reasoning_summary(state, "critic", "running", "analysis complete"),
+            "idle",
+            "Waiting for coder proposal",
+            _reasoning_summary(state, "critic", "idle", "waiting for coder proposal"),
         )
         _set_agent(
             state,
@@ -253,8 +253,8 @@ def run_case(
             state,
             "verifier",
             "idle",
-            "Waiting for merged proposal",
-            _reasoning_summary(state, "verifier", "idle", "awaiting merged proposal"),
+            "Waiting for debugger assessment",
+            _reasoning_summary(state, "verifier", "idle", "awaiting debugger assessment"),
         )
         if state_path is not None:
             _write_state(state_path, state)

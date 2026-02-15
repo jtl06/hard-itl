@@ -199,7 +199,22 @@ HTML = """<!doctype html>
           </select>
         </label>
         <label>Runs <input id=\"runs\" type=\"number\" value=\"8\" min=\"1\" max=\"100\"></label>
-        <label id=\"target_baud_wrap\">Target Baud <input id=\"target_baud\" type=\"number\" value=\"76200\" min=\"1200\" step=\"1\"></label>
+        <label id=\"target_baud_wrap\">Target Baud
+          <select id=\"target_baud\">
+            <option value=\"9600\">9600</option>
+            <option value=\"19200\">19200</option>
+            <option value=\"38400\">38400</option>
+            <option value=\"57600\">57600</option>
+            <option value=\"74880\">74880</option>
+            <option value=\"115200\" selected>115200</option>
+            <option value=\"230400\">230400</option>
+            <option value=\"460800\">460800</option>
+            <option value=\"921600\">921600</option>
+            <option value=\"1000000\">1000000</option>
+            <option value=\"1500000\">1500000</option>
+            <option value=\"2000000\">2000000</option>
+          </select>
+        </label>
         <label id=\"target_frame_wrap\" style=\"display:none;\">Target Frame
           <select id=\"target_frame\">
             <option value=\"8N1\">8N1</option>

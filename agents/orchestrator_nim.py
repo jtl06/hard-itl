@@ -101,20 +101,65 @@ class NIMOrchestrator:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout_s)) as session:
             normalized: list[AgentOutput] = []
             if self.execution_mode == "parallel":
-                tasks = [
-                    self._call_agent(session, "planner", planner_prompt, user_prompt, status_callback),
-                    self._call_agent(session, "coder", coder_prompt, user_prompt, status_callback),
-                    self._call_agent(session, "critic", critic_prompt, user_prompt, status_callback),
-                    self._call_agent(session, "verifier", verifier_prompt, user_prompt, status_callback),
-                ]
-                fanout_results = await asyncio.gather(*tasks, return_exceptions=True)
-                for role, item in zip(["planner", "coder", "critic", "verifier"], fanout_results):
-                    if isinstance(item, Exception):
-                        normalized.append(AgentOutput(role=role, text=f"{role} unavailable: {item}"))
-                        if status_callback is not None:
-                            status_callback(role, "error", str(item))
-                    else:
-                        normalized.append(item)
+                # Dependency-driven pipeline:
+                # planner/coder can run together from raw evidence,
+                # critic starts after coder output exists,
+                # verifier starts after planner/coder/critic are available.
+                planner_task = asyncio.create_task(
+                    self._call_agent(session, "planner", planner_prompt, user_prompt, status_callback)
+                )
+                coder_task = asyncio.create_task(
+                    self._call_agent(session, "coder", coder_prompt, user_prompt, status_callback)
+                )
+
+                planner_out: AgentOutput
+                coder_out: AgentOutput
+                try:
+                    planner_out = await planner_task
+                except Exception as exc:
+                    planner_out = AgentOutput(role="planner", text=f"planner unavailable: {exc}")
+                    if status_callback is not None:
+                        status_callback("planner", "error", str(exc))
+                try:
+                    coder_out = await coder_task
+                except Exception as exc:
+                    coder_out = AgentOutput(role="coder", text=f"coder unavailable: {exc}")
+                    if status_callback is not None:
+                        status_callback("coder", "error", str(exc))
+
+                critic_input = (
+                    user_prompt
+                    + "\n\n[coder_proposal]\n"
+                    + coder_out.text
+                    + "\n\n[planner_experiments]\n"
+                    + planner_out.text
+                )
+                try:
+                    critic_out = await self._call_agent(session, "critic", critic_prompt, critic_input, status_callback)
+                except Exception as exc:
+                    critic_out = AgentOutput(role="critic", text=f"critic unavailable: {exc}")
+                    if status_callback is not None:
+                        status_callback("critic", "error", str(exc))
+
+                verifier_input = (
+                    user_prompt
+                    + "\n\n[planner]\n"
+                    + planner_out.text
+                    + "\n\n[coder]\n"
+                    + coder_out.text
+                    + "\n\n[critic]\n"
+                    + critic_out.text
+                )
+                try:
+                    verifier_out = await self._call_agent(
+                        session, "verifier", verifier_prompt, verifier_input, status_callback
+                    )
+                except Exception as exc:
+                    verifier_out = AgentOutput(role="verifier", text=f"verifier unavailable: {exc}")
+                    if status_callback is not None:
+                        status_callback("verifier", "error", str(exc))
+
+                normalized = [planner_out, coder_out, critic_out, verifier_out]
             else:
                 for role, prompt in (
                     ("planner", planner_prompt),
