@@ -21,6 +21,7 @@ GPU_CACHE: dict[str, object] = {
     "ts": 0.0,
     "has_good": False,
     "data": {"available": False, "message": "Waiting for GPU metrics..."},
+    "last_good": {},
 }
 GPU_UNIFIED_MEM_NOTE = (
     "Unified memory expected on DGX Spark. nvidia-smi may not report dedicated VRAM usage.\n"
@@ -473,7 +474,7 @@ function renderSystemStats(gpu) {
     !String(el.textContent || '').startsWith('Waiting for GPU metrics');
 
   // Ignore transient unavailable/N-A samples and keep last good values on screen.
-  if (!gpu || gpu.available === false) {
+  if (!gpu || gpu.available === false || Number(gpu.gpu_count || 0) !== 1) {
     if (!hasExisting) {
       setText('system_stats', gpu?.message || 'nvidia-smi unavailable');
     }
@@ -857,6 +858,15 @@ class Handler(BaseHTTPRequestHandler):
         if now - cached_ts < 2.0:
             return dict(GPU_CACHE.get("data", {}))
 
+        def _stale_from_last_good(reason: str) -> dict | None:
+            last_good = GPU_CACHE.get("last_good", {})
+            if not isinstance(last_good, dict) or not last_good:
+                return None
+            stale = dict(last_good)
+            stale["sample_status"] = "stale"
+            stale["message"] = reason
+            return stale
+
         cmd = [
             "nvidia-smi",
             "--query-gpu=index,utilization.gpu,memory.used,memory.total,power.draw,power.limit,temperature.gpu",
@@ -865,15 +875,18 @@ class Handler(BaseHTTPRequestHandler):
         try:
             cp = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=1.2)
         except FileNotFoundError:
+            stale = _stale_from_last_good(f"nvidia-smi not found\n{GPU_UNIFIED_MEM_NOTE}")
+            if stale is not None:
+                GPU_CACHE["ts"] = now
+                GPU_CACHE["data"] = stale
+                return stale
             data = {"available": False, "message": f"nvidia-smi not found\n{GPU_UNIFIED_MEM_NOTE}"}
             GPU_CACHE["ts"] = now
             GPU_CACHE["data"] = data
             return data
         except Exception as exc:
-            if bool(GPU_CACHE.get("has_good", False)):
-                stale = dict(GPU_CACHE.get("data", {}))
-                stale["sample_status"] = "stale"
-                stale["message"] = f"nvidia-smi failed: {exc}"
+            stale = _stale_from_last_good(f"nvidia-smi failed: {exc}")
+            if stale is not None:
                 GPU_CACHE["ts"] = now
                 GPU_CACHE["data"] = stale
                 return stale
@@ -884,10 +897,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if cp.returncode != 0:
             detail = cp.stderr.strip() or cp.stdout.strip() or f"exit {cp.returncode}"
-            if bool(GPU_CACHE.get("has_good", False)):
-                stale = dict(GPU_CACHE.get("data", {}))
-                stale["sample_status"] = "stale"
-                stale["message"] = f"nvidia-smi error: {detail}"
+            stale = _stale_from_last_good(f"nvidia-smi error: {detail}")
+            if stale is not None:
                 GPU_CACHE["ts"] = now
                 GPU_CACHE["data"] = stale
                 return stale
@@ -898,10 +909,8 @@ class Handler(BaseHTTPRequestHandler):
 
         rows = [ln.strip() for ln in cp.stdout.splitlines() if ln.strip()]
         if not rows:
-            if bool(GPU_CACHE.get("has_good", False)):
-                stale = dict(GPU_CACHE.get("data", {}))
-                stale["sample_status"] = "stale"
-                stale["message"] = "nvidia-smi returned no GPU rows"
+            stale = _stale_from_last_good("nvidia-smi returned no GPU rows")
+            if stale is not None:
                 GPU_CACHE["ts"] = now
                 GPU_CACHE["data"] = stale
                 return stale
@@ -962,10 +971,8 @@ class Handler(BaseHTTPRequestHandler):
             GPU_CACHE["data"] = data
             return data
         if gpu_count != 1:
-            if bool(GPU_CACHE.get("has_good", False)):
-                stale = dict(GPU_CACHE.get("data", {}))
-                stale["sample_status"] = "stale"
-                stale["message"] = f"ignored sample: expected 1 GPU, got {gpu_count}"
+            stale = _stale_from_last_good(f"ignored sample: expected 1 GPU, got {gpu_count}")
+            if stale is not None:
                 GPU_CACHE["ts"] = now
                 GPU_CACHE["data"] = stale
                 return stale
@@ -987,6 +994,7 @@ class Handler(BaseHTTPRequestHandler):
             "message": "",
         }
         GPU_CACHE["has_good"] = True
+        GPU_CACHE["last_good"] = dict(data)
         GPU_CACHE["ts"] = now
         GPU_CACHE["data"] = data
         return data
