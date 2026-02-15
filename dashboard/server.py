@@ -17,7 +17,11 @@ LOG_PATH = ROOT / "dashboard" / "orchestrator.log"
 
 PROCESS: subprocess.Popen[str] | None = None
 LOCK = threading.Lock()
-GPU_CACHE: dict[str, object] = {"ts": 0.0, "data": {"available": False, "message": "Waiting for GPU metrics..."}}
+GPU_CACHE: dict[str, object] = {
+    "ts": 0.0,
+    "has_good": False,
+    "data": {"available": False, "message": "Waiting for GPU metrics..."},
+}
 
 HTML = """<!doctype html>
 <html>
@@ -86,9 +90,8 @@ HTML = """<!doctype html>
       grid-template-areas:
         "planner coder load"
         "debugger coordinator validator"
-        "overall overall uart"
-        "overall overall tracker"
-        "overall overall system";
+        "overall uart tracker"
+        "overall system tracker";
       gap: 12px;
     }
     .card {
@@ -121,12 +124,13 @@ HTML = """<!doctype html>
     .area-coordinator { grid-area: coordinator; }
     .area-load { grid-area: load; }
     .area-validator { grid-area: validator; }
-    .area-overall { grid-area: overall; min-height: 240px; }
+    .area-overall { grid-area: overall; min-height: 180px; }
     .area-uart { grid-area: uart; }
     .area-tracker { grid-area: tracker; }
     .area-system { grid-area: system; }
     .area-load { min-height: 180px; }
-    .area-uart, .area-tracker, .area-system { min-height: 130px; }
+    .area-uart, .area-tracker, .area-system { min-height: 140px; }
+    #overall_output { max-height: 170px; }
     .chart-grid {
       display: grid;
       gap: 8px;
@@ -161,11 +165,10 @@ HTML = """<!doctype html>
         grid-template-areas:
           "planner coder"
           "debugger coordinator"
-          "load load"
-          "validator validator"
+          "load validator"
           "overall overall"
           "uart tracker"
-          "system system";
+          "system tracker";
       }
     }
     @media (max-width: 920px) {
@@ -469,6 +472,11 @@ function renderSystemStats(gpu) {
     `Power: ${Number(gpu.power_w || 0).toFixed(1)} / ${Number(gpu.power_limit_w || 0).toFixed(1)} W`,
     `Temp: ${Number(gpu.temp_c || 0).toFixed(1)} C`,
   ];
+  if (gpu.sample_status === 'stale') {
+    lines.push(`Sample: stale (${gpu.message || 'using last good reading'})`);
+  } else {
+    lines.push('Sample: fresh');
+  }
   if (gpu.per_gpu && gpu.per_gpu.length) {
     lines.push('');
     lines.push('Per-GPU:');
@@ -838,13 +846,20 @@ class Handler(BaseHTTPRequestHandler):
             "--format=csv,noheader,nounits",
         ]
         try:
-            cp = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=0.8)
+            cp = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=1.2)
         except FileNotFoundError:
             data = {"available": False, "message": "nvidia-smi not found"}
             GPU_CACHE["ts"] = now
             GPU_CACHE["data"] = data
             return data
         except Exception as exc:
+            if bool(GPU_CACHE.get("has_good", False)):
+                stale = dict(GPU_CACHE.get("data", {}))
+                stale["sample_status"] = "stale"
+                stale["message"] = f"nvidia-smi failed: {exc}"
+                GPU_CACHE["ts"] = now
+                GPU_CACHE["data"] = stale
+                return stale
             data = {"available": False, "message": f"nvidia-smi failed: {exc}"}
             GPU_CACHE["ts"] = now
             GPU_CACHE["data"] = data
@@ -852,6 +867,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if cp.returncode != 0:
             detail = cp.stderr.strip() or cp.stdout.strip() or f"exit {cp.returncode}"
+            if bool(GPU_CACHE.get("has_good", False)):
+                stale = dict(GPU_CACHE.get("data", {}))
+                stale["sample_status"] = "stale"
+                stale["message"] = f"nvidia-smi error: {detail}"
+                GPU_CACHE["ts"] = now
+                GPU_CACHE["data"] = stale
+                return stale
             data = {"available": False, "message": f"nvidia-smi error: {detail}"}
             GPU_CACHE["ts"] = now
             GPU_CACHE["data"] = data
@@ -859,6 +881,13 @@ class Handler(BaseHTTPRequestHandler):
 
         rows = [ln.strip() for ln in cp.stdout.splitlines() if ln.strip()]
         if not rows:
+            if bool(GPU_CACHE.get("has_good", False)):
+                stale = dict(GPU_CACHE.get("data", {}))
+                stale["sample_status"] = "stale"
+                stale["message"] = "nvidia-smi returned no GPU rows"
+                GPU_CACHE["ts"] = now
+                GPU_CACHE["data"] = stale
+                return stale
             data = {"available": False, "message": "nvidia-smi returned no GPU rows"}
             GPU_CACHE["ts"] = now
             GPU_CACHE["data"] = data
@@ -925,7 +954,10 @@ class Handler(BaseHTTPRequestHandler):
             "power_limit_w": power_limit_total,
             "temp_c": temp_total / gpu_count,
             "per_gpu": per_gpu,
+            "sample_status": "fresh",
+            "message": "",
         }
+        GPU_CACHE["has_good"] = True
         GPU_CACHE["ts"] = now
         GPU_CACHE["data"] = data
         return data
