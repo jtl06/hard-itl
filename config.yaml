@@ -2,10 +2,10 @@ runner:
   flash_method: auto
   serial_port: ""
   serial_baud: 115200
-  serial_timeout_s: 30
-  reenumeration_timeout_s: 20
+  serial_timeout_s: 8
+  reenumeration_timeout_s: 10
   prefer_by_id: true
-  build_cmd: "make -C firmware all"
+  build_cmd: "make -C firmware rp2350_uart_demo"
   build_cwd: "."
   real_elf_path: "firmware/build/firmware.elf"
   real_uf2_path: "firmware/build/firmware.uf2"
@@ -20,5 +20,5 @@ nim:
 
 cases:
   uart_demo:
-    initial_uart_rate: 1000000
-    initial_buffer_size: 16
+    initial_guess_baud: 57600
+    target_baud: 115200

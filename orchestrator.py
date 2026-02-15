@@ -64,6 +64,7 @@ def run_case(
     live_uart: bool = False,
     trace: bool = False,
     verbose: bool = False,
+    target_baud: int = 0,
 ) -> list[dict[str, Any]]:
     cfg = parse_config("config.yaml")
     nim_cfg = cfg.get("nim", {})
@@ -96,6 +97,13 @@ def run_case(
         "uart_rate": int(case_cfg.get("initial_uart_rate", 1000000)),
         "buffer_size": int(case_cfg.get("initial_buffer_size", 16)),
     }
+    if case_id == "uart_demo":
+        default_target_baud = int(case_cfg.get("target_baud", 115200))
+        selected_target = target_baud if target_baud > 0 else default_target_baud
+        params = {
+            "guess_baud": int(case_cfg.get("initial_guess_baud", 57600)),
+            "target_baud": selected_target,
+        }
     if not case_cfg:
         params = planner.initial_request()
 
@@ -240,8 +248,10 @@ def run_case(
                 "run": run_index,
                 "run_id": run_result["run_id"],
                 "status": analysis.pass_fail,
-                "uart_rate": params["uart_rate"],
-                "buffer_size": params["buffer_size"],
+                "guess_baud": int(params.get("guess_baud", 0)),
+                "target_baud": int(params.get("target_baud", 0)),
+                "uart_rate": int(params.get("uart_rate", 0)),
+                "buffer_size": int(params.get("buffer_size", 0)),
                 "error_count": analysis.metrics["error_count"],
                 "run_dir": run_result["run_dir"],
             }
@@ -264,8 +274,10 @@ def run_case(
             "run": run_index,
             "run_id": run_result["run_id"],
             "status": analysis.pass_fail,
-            "uart_rate": params["uart_rate"],
-            "buffer_size": params["buffer_size"],
+            "guess_baud": int(params.get("guess_baud", 0)),
+            "target_baud": int(params.get("target_baud", 0)),
+            "uart_rate": int(params.get("uart_rate", 0)),
+            "buffer_size": int(params.get("buffer_size", 0)),
             "error_count": analysis.metrics["error_count"],
             "run_dir": run_result["run_dir"],
             "diagnostics": run_result.get("diagnostics", []),
@@ -283,7 +295,17 @@ def run_case(
                 _write_state(state_path, state)
 
         if analysis.pass_fail != "pass" and nim_next_experiments:
-            params = nim_next_experiments[0]
+            if "guess_baud" in params:
+                baud_candidates = [x for x in nim_next_experiments if "guess_baud" in x]
+                if baud_candidates:
+                    params = {
+                        "guess_baud": int(baud_candidates[0]["guess_baud"]),
+                        "target_baud": int(baud_candidates[0].get("target_baud", params.get("target_baud", 115200))),
+                    }
+                else:
+                    params = planner.next_request(params, analysis=analysis, triage=triage)
+            else:
+                params = nim_next_experiments[0]
         else:
             params = planner.next_request(params, analysis=analysis, triage=triage)
 
@@ -503,6 +525,16 @@ def _print_live_run_details(
 
 
 def print_summary(rows: list[dict[str, Any]]) -> None:
+    baud_mode = any(int(r.get("guess_baud", 0)) > 0 for r in rows)
+    if baud_mode:
+        print("run | status | guess_baud | target_baud | errors | run_id")
+        print("-" * 76)
+        for r in rows:
+            print(
+                f"{r['run']:>3} | {r['status']:<6} | {r['guess_baud']:<10} | "
+                f"{r['target_baud']:<11} | {r['error_count']:<6} | {r['run_id']}"
+            )
+        return
     print("run | status | uart_rate | buffer_size | errors | run_id")
     print("-" * 72)
     for r in rows:
@@ -529,6 +561,7 @@ def main() -> None:
     parser.add_argument("--trace", action="store_true", help="Print live agent reasoning summaries")
     parser.add_argument("--verbose", action="store_true", help="Enable all live CLI output")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--target-baud", type=int, default=0, help="Target baud for uart_demo baud-hunt mode")
     args = parser.parse_args()
 
     try:
@@ -543,6 +576,7 @@ def main() -> None:
             live_uart=args.live_uart,
             trace=args.trace,
             verbose=args.verbose,
+            target_baud=args.target_baud,
         )
     except FlashError as exc:
         if args.state_file:

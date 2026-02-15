@@ -81,12 +81,13 @@ class Runner:
                 f"serial re-enumeration selected port={serial_port or 'none'} within {self.config.reenumeration_timeout_s}s"
             )
 
+        capture_baud = int(params.get("guess_baud", self.config.serial_baud))
         uart_lines, uart_pass, capture_note, detected_port = capture_uart(
             run_id=run_id,
             params=params,
             mode=mode,
             serial_port=serial_port,
-            baud=self.config.serial_baud,
+            baud=capture_baud,
             timeout_s=self.config.serial_timeout_s,
             prefer_by_id=self.config.prefer_by_id,
             line_callback=uart_line_callback,

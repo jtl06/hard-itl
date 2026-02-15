@@ -5,8 +5,8 @@ from schemas.types import AnalysisResult, TriageResult
 
 class PlannerAgent:
     def initial_request(self) -> dict[str, int]:
-        # Deliberately unstable start to exercise fail -> diagnose -> pass loop.
-        return {"uart_rate": 1000000, "buffer_size": 16}
+        # Default initial search point for baud-hunt demos.
+        return {"guess_baud": 115200, "target_baud": 115200}
 
     def next_request(
         self,
@@ -16,6 +16,22 @@ class PlannerAgent:
     ) -> dict[str, int]:
         if analysis.pass_fail == "pass":
             return previous_params
+
+        # Baud-hunt mode: guided search around prior guess.
+        if "guess_baud" in previous_params:
+            if triage.next_experiments:
+                nxt = triage.next_experiments[0]
+                return {
+                    "guess_baud": int(nxt.get("guess_baud", previous_params["guess_baud"])),
+                    "target_baud": int(nxt.get("target_baud", previous_params.get("target_baud", 115200))),
+                }
+            guess = int(previous_params.get("guess_baud", 115200))
+            target = int(previous_params.get("target_baud", 115200))
+            if guess < target:
+                guess = min(target, guess * 2)
+            else:
+                guess = max(target, guess // 2)
+            return {"guess_baud": guess, "target_baud": target}
 
         if triage.next_experiments:
             # Pick the first triage candidate and keep deterministic progression.

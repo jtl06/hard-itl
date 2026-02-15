@@ -56,6 +56,22 @@ class TriageAgent:
         if analysis.pass_fail == "pass":
             return [params]
 
+        if "guess_baud" in params:
+            guess = int(params.get("guess_baud", 115200))
+            target = int(params.get("target_baud", 115200))
+            # Deterministic convergence in a few runs.
+            if guess == target:
+                return [params]
+            step = max(1, abs(target - guess) // 2)
+            if guess < target:
+                nxt = min(target, guess + step)
+            else:
+                nxt = max(target, guess - step)
+            return [
+                {"guess_baud": target, "target_baud": target},
+                {"guess_baud": nxt, "target_baud": target},
+            ]
+
         uart_rate = int(params.get("uart_rate", 1000000))
         buffer_size = int(params.get("buffer_size", 16))
 

@@ -196,6 +196,14 @@ def _simulate_mock_uart(
     line_callback: Callable[[str], None] | None = None,
     emulate_timing: bool = False,
 ) -> tuple[list[str], bool, str]:
+    if "guess_baud" in params:
+        return _simulate_mock_baud_hunt(
+            run_id=run_id,
+            params=params,
+            line_callback=line_callback,
+            emulate_timing=emulate_timing,
+        )
+
     uart_rate = int(params.get("uart_rate", 1000000))
     buffer_size = int(params.get("buffer_size", 16))
 
@@ -251,3 +259,55 @@ def _parse_prefix_timestamp(line: str) -> datetime | None:
         return datetime.fromisoformat(first)
     except ValueError:
         return None
+
+
+def _simulate_mock_baud_hunt(
+    run_id: str,
+    params: dict[str, Any],
+    line_callback: Callable[[str], None] | None = None,
+    emulate_timing: bool = False,
+) -> tuple[list[str], bool, str]:
+    guess = int(params.get("guess_baud", 115200))
+    target = int(params.get("target_baud", 115200))
+
+    t0 = datetime.now(timezone.utc)
+    lines = [
+        f"{_iso(t0)} RUN_START {run_id}",
+        f"{_iso(t0 + timedelta(milliseconds=5))} INFO cfg guess_baud={guess} target_baud={target}",
+        f"{_iso(t0 + timedelta(milliseconds=12))} INFO tx PING",
+    ]
+
+    if guess == target:
+        lines.extend(
+            [
+                f"{_iso(t0 + timedelta(milliseconds=20))} INFO rx PONG",
+                f"{_iso(t0 + timedelta(milliseconds=28))} INFO test_result PASS",
+                f"{_iso(t0 + timedelta(milliseconds=36))} RUN_END {run_id}",
+            ]
+        )
+        passed = True
+        note = "mock pass: guessed baud matches target"
+    else:
+        lines.extend(
+            [
+                f"{_iso(t0 + timedelta(milliseconds=20))} ERROR BAUD_MISMATCH guessed={guess} expected={target}",
+                f"{_iso(t0 + timedelta(milliseconds=30))} INFO test_result FAIL",
+                f"{_iso(t0 + timedelta(milliseconds=40))} RUN_END {run_id}",
+            ]
+        )
+        passed = False
+        note = "mock fail: guessed baud does not match target"
+
+    if line_callback is not None:
+        prev_ts: datetime | None = None
+        for line in lines:
+            if emulate_timing:
+                ts = _parse_prefix_timestamp(line)
+                if ts is not None and prev_ts is not None:
+                    dt = (ts - prev_ts).total_seconds()
+                    if dt > 0:
+                        time.sleep(min(dt, 0.2))
+                prev_ts = ts if ts is not None else prev_ts
+            line_callback(line)
+
+    return lines, passed, note

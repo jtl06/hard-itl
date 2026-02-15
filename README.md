@@ -43,9 +43,11 @@ Runner is responsible for:
 
 ## Demo behavior
 
-Deterministic synthetic flake:
-- fail when `uart_rate > 230400` or `buffer_size < 64`
-- pass when `uart_rate <= 230400` and `buffer_size >= 64`
+Deterministic synthetic flake (baud-hunt mode in `uart_demo`):
+- user selects `target_baud`
+- agents start from an initial `guess_baud`
+- fail until guessed baud matches target
+- pass when `guess_baud == target_baud`
 
 Planner/agents converge to a passing config in ~6-8 runs.
 
@@ -131,13 +133,14 @@ python3 orchestrator.py --case uart_demo --runs 8 --mode mock --live-uart --trac
 Real mode example:
 
 ```bash
-PYTHONPATH=. .venv/bin/python orchestrator.py --case uart_demo --runs 8 --mode real
+PYTHONPATH=. .venv/bin/python orchestrator.py --case uart_demo --runs 8 --mode real --target-baud 76200
 ```
 
 ## Real hardware setup
 
 1. Set `runner.build_cmd`, `runner.real_uf2_path` (and optionally `runner.real_elf_path`) in `config.yaml`.
    - Start from `config.real.example.yaml`.
+   - Default build target is `make -C firmware rp2350_uart_demo`.
 2. Ensure RP2350 is connected and accessible via `/dev/serial/by-id/*` or `/dev/ttyACM*`.
 3. Ensure one flash backend is available:
    - UF2 mount, or
@@ -154,3 +157,11 @@ Notes:
 - Real mode now uses Linux/macOS compatible serial config (`stty -F`/`-f`).
 - UART capture in real mode reads actual DUT output only; no synthetic `RUN_START/RUN_END` lines are injected.
 - Capture stops when `RUN_END <run_id>` (or any `RUN_END ...`) is observed, otherwise on timeout.
+
+## GUI baud-hunt flow
+
+In dashboard (`make gui`), set:
+- `Case = uart_demo`
+- `Target Baud = <your value, e.g. 76200>`
+
+Then click `Start Run`. The run tracker will show `guess` vs `target` progression.

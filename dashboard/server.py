@@ -153,6 +153,7 @@ HTML = """<!doctype html>
       <div class=\"row\">
         <label>Case <input id=\"case\" value=\"uart_demo\"></label>
         <label>Runs <input id=\"runs\" type=\"number\" value=\"8\" min=\"1\" max=\"100\"></label>
+        <label>Target Baud <input id=\"target_baud\" type=\"number\" value=\"76200\" min=\"1200\" step=\"1\"></label>
         <label>Mode
           <select id=\"mode\"><option value=\"mock\">mock</option><option value=\"real\">real</option></select>
         </label>
@@ -228,6 +229,7 @@ async function startRun() {
     const payload = {
       case: document.getElementById('case').value,
       runs: Number(document.getElementById('runs').value || 8),
+      target_baud: Number(document.getElementById('target_baud').value || 0),
       mode: document.getElementById('mode').value,
     };
     const res = await fetch('/api/run', {
@@ -292,7 +294,9 @@ function renderStateBundle(bundle) {
   setText('overall_output', state.overall_output || 'No output yet. Start a run to populate summarizer output.');
   setText('latest_uart', (state.latest_uart || []).join('\\n') || 'No UART lines yet.');
   const history = (state.history || []).map(r =>
-    `run ${r.run}: ${String(r.status || '').toUpperCase()}  rate=${r.uart_rate}  buf=${r.buffer_size}  errors=${r.error_count}  id=${r.run_id}`
+    (Number(r.guess_baud || 0) > 0)
+      ? `run ${r.run}: ${String(r.status || '').toUpperCase()}  guess=${r.guess_baud}  target=${r.target_baud}  errors=${r.error_count}  id=${r.run_id}`
+      : `run ${r.run}: ${String(r.status || '').toUpperCase()}  rate=${r.uart_rate}  buf=${r.buffer_size}  errors=${r.error_count}  id=${r.run_id}`
   ).join('\\n');
   setText('history', history || 'No runs yet.');
 
@@ -400,6 +404,7 @@ class Handler(BaseHTTPRequestHandler):
             case = str(payload.get("case", "uart_demo"))
             runs = int(payload.get("runs", 8))
             mode = str(payload.get("mode", "mock"))
+            target_baud = int(payload.get("target_baud", 0))
 
             with LOCK:
                 global PROCESS
@@ -438,10 +443,12 @@ class Handler(BaseHTTPRequestHandler):
                     case,
                     "--runs",
                     str(runs),
-                    "--mode",
-                    mode,
-                    "--state-file",
-                    str(STATE_PATH),
+                "--mode",
+                mode,
+                "--target-baud",
+                str(target_baud),
+                "--state-file",
+                str(STATE_PATH),
                     "--live-uart",
                     "--trace",
                 ]
