@@ -17,6 +17,7 @@ LOG_PATH = ROOT / "dashboard" / "orchestrator.log"
 
 PROCESS: subprocess.Popen[str] | None = None
 LOCK = threading.Lock()
+GPU_CACHE: dict[str, object] = {"ts": 0.0, "data": {"available": False, "message": "Waiting for GPU metrics..."}}
 
 HTML = """<!doctype html>
 <html>
@@ -120,11 +121,12 @@ HTML = """<!doctype html>
     .area-coordinator { grid-area: coordinator; }
     .area-load { grid-area: load; }
     .area-validator { grid-area: validator; }
-    .area-overall { grid-area: overall; min-height: 350px; }
+    .area-overall { grid-area: overall; min-height: 240px; }
     .area-uart { grid-area: uart; }
     .area-tracker { grid-area: tracker; }
     .area-system { grid-area: system; }
     .area-load { min-height: 180px; }
+    .area-uart, .area-tracker, .area-system { min-height: 130px; }
     .chart-grid {
       display: grid;
       gap: 8px;
@@ -318,7 +320,7 @@ HTML = """<!doctype html>
       </article>
       <article class=\"card area-system\">
         <h3>System Utilization</h3>
-        <div class=\"meta\">From <code>nvidia-smi</code> (updates every 0.5s).</div>
+        <div class=\"meta\">From <code>nvidia-smi</code> (updates every 2.0s).</div>
         <pre id=\"system_stats\">Waiting for GPU metrics...</pre>
       </article>
     </section>
@@ -825,6 +827,11 @@ class Handler(BaseHTTPRequestHandler):
         }
 
     def _read_gpu_stats(self) -> dict:
+        now = time.time()
+        cached_ts = float(GPU_CACHE.get("ts", 0.0))
+        if now - cached_ts < 2.0:
+            return dict(GPU_CACHE.get("data", {}))
+
         cmd = [
             "nvidia-smi",
             "--query-gpu=index,utilization.gpu,memory.used,memory.total,power.draw,power.limit,temperature.gpu",
@@ -833,17 +840,29 @@ class Handler(BaseHTTPRequestHandler):
         try:
             cp = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=0.8)
         except FileNotFoundError:
-            return {"available": False, "message": "nvidia-smi not found"}
+            data = {"available": False, "message": "nvidia-smi not found"}
+            GPU_CACHE["ts"] = now
+            GPU_CACHE["data"] = data
+            return data
         except Exception as exc:
-            return {"available": False, "message": f"nvidia-smi failed: {exc}"}
+            data = {"available": False, "message": f"nvidia-smi failed: {exc}"}
+            GPU_CACHE["ts"] = now
+            GPU_CACHE["data"] = data
+            return data
 
         if cp.returncode != 0:
             detail = cp.stderr.strip() or cp.stdout.strip() or f"exit {cp.returncode}"
-            return {"available": False, "message": f"nvidia-smi error: {detail}"}
+            data = {"available": False, "message": f"nvidia-smi error: {detail}"}
+            GPU_CACHE["ts"] = now
+            GPU_CACHE["data"] = data
+            return data
 
         rows = [ln.strip() for ln in cp.stdout.splitlines() if ln.strip()]
         if not rows:
-            return {"available": False, "message": "nvidia-smi returned no GPU rows"}
+            data = {"available": False, "message": "nvidia-smi returned no GPU rows"}
+            GPU_CACHE["ts"] = now
+            GPU_CACHE["data"] = data
+            return data
 
         def _f(text: str) -> float:
             text = text.strip()
@@ -892,8 +911,11 @@ class Handler(BaseHTTPRequestHandler):
 
         gpu_count = len(per_gpu)
         if gpu_count == 0:
-            return {"available": False, "message": "unable to parse nvidia-smi output"}
-        return {
+            data = {"available": False, "message": "unable to parse nvidia-smi output"}
+            GPU_CACHE["ts"] = now
+            GPU_CACHE["data"] = data
+            return data
+        data = {
             "available": True,
             "gpu_count": gpu_count,
             "util_percent": util_total / gpu_count,
@@ -904,6 +926,9 @@ class Handler(BaseHTTPRequestHandler):
             "temp_c": temp_total / gpu_count,
             "per_gpu": per_gpu,
         }
+        GPU_CACHE["ts"] = now
+        GPU_CACHE["data"] = data
+        return data
 
     def _send_html(self, html: str) -> None:
         body = html.encode("utf-8")
