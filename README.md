@@ -152,10 +152,13 @@ Real mode requires valid firmware build outputs configured in `config.yaml`:
 - `runner.build_cmd`
 - `runner.real_uf2_path`
 - optional `runner.real_elf_path`
+- flash backend settings (`runner.flash_method`, `runner.openocd_cfg` when using OpenOCD)
 
 Default config uses:
 - `build_cmd: make -C firmware REQUIRE_PICO_SDK=1 rp2350_{case_id}`
 - `real_uf2_path: firmware/build/firmware.uf2`
+- `flash_method: openocd`
+- `openocd_cfg: /usr/share/openocd/scripts/board/pico2.cfg`
 
 If `runner.real_uf2_path` is missing, orchestrator exits with configuration error.
 If the UF2 appears to be a placeholder artifact, real mode aborts before flashing.
@@ -165,6 +168,17 @@ Run real mode:
 ```bash
 make real
 ```
+
+OpenOCD-only setup:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y openocd
+```
+
+If your board/probe needs a different config, set `runner.openocd_cfg` in `config.yaml`.
+You can also provide multiple cfg files separated by `;`:
+- `openocd_cfg: interface/cmsis-dap.cfg;target/rp2350.cfg`
 
 Notes:
 - Install build dependencies on Ubuntu:

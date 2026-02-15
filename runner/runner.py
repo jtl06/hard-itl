@@ -26,6 +26,7 @@ class RunnerConfig:
     build_cwd: str = "."
     real_elf_path: str = ""
     real_uf2_path: str = ""
+    openocd_cfg: str = ""
 
 
 class Runner:
@@ -37,7 +38,7 @@ class Runner:
         self.runs_root.mkdir(parents=True, exist_ok=True)
 
     def flash(self, image_path: Path, method: str = "auto", mode: str = "mock") -> tuple[bool, str, list[str]]:
-        flasher = Flasher(mock_mode=(mode == "mock"))
+        flasher = Flasher(mock_mode=(mode == "mock"), openocd_cfg=self.config.openocd_cfg)
         return flasher.flash(image_path=image_path, method=method)
 
     def execute(

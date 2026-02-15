@@ -86,6 +86,7 @@ def run_case(
         build_cwd=str(cfg.get("runner", {}).get("build_cwd", ".")),
         real_elf_path=str(cfg.get("runner", {}).get("real_elf_path", "")),
         real_uf2_path=str(cfg.get("runner", {}).get("real_uf2_path", "")),
+        openocd_cfg=str(cfg.get("runner", {}).get("openocd_cfg", "")),
     )
 
     runner = Runner(runner_cfg)

@@ -11,8 +11,9 @@ class FlashError(RuntimeError):
 
 
 class Flasher:
-    def __init__(self, mock_mode: bool = True) -> None:
+    def __init__(self, mock_mode: bool = True, openocd_cfg: str = "") -> None:
         self.mock_mode = mock_mode
+        self.openocd_cfg = openocd_cfg
 
     def flash(self, image_path: Path, method: str = "auto") -> tuple[bool, str, list[str]]:
         diagnostics: list[str] = []
@@ -82,17 +83,20 @@ class Flasher:
         return proc.returncode == 0, "picotool", diagnostics
 
     def _flash_openocd(self, image_path: Path, diagnostics: list[str]) -> tuple[bool, str, list[str]]:
-        cfg = os.getenv("OPENOCD_CFG", "")
+        cfg = self.openocd_cfg or os.getenv("OPENOCD_CFG", "")
         if not cfg:
-            diagnostics.append("OPENOCD_CFG not set; cannot run openocd backend")
+            diagnostics.append("OPENOCD cfg not set (runner.openocd_cfg or OPENOCD_CFG env); cannot run openocd backend")
+            return False, "openocd", diagnostics
+        cfg_files = [part.strip() for part in cfg.split(";") if part.strip()]
+        if not cfg_files:
+            diagnostics.append("OPENOCD cfg resolved empty after parsing; cannot run openocd backend")
             return False, "openocd", diagnostics
         cmd = [
             "openocd",
-            "-f",
-            cfg,
-            "-c",
-            f"program {image_path} verify reset exit",
         ]
+        for cfg_file in cfg_files:
+            cmd.extend(["-f", cfg_file])
+        cmd.extend(["-c", f"program {image_path} verify reset exit"])
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         diagnostics.append(f"openocd rc={proc.returncode}")
         if proc.stdout.strip():

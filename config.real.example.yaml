@@ -1,5 +1,6 @@
 runner:
-  flash_method: auto
+  flash_method: openocd
+  openocd_cfg: "/usr/share/openocd/scripts/board/pico2.cfg" # supports ';' separated cfgs, e.g. interface/cmsis-dap.cfg;target/rp2350.cfg
   serial_port: ""                  # leave empty for autodetect
   serial_baud: 115200
   serial_timeout_s: 8
