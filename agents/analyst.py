@@ -22,6 +22,7 @@ class AnalystAgent:
         has_start = False
         has_end = False
         last_error_code = ""
+        baud_direction = "unknown"
 
         for idx, line in enumerate(lines):
             parts = line.split(" ", 2)
@@ -44,6 +45,10 @@ class AnalystAgent:
                 code = msg.split(" ", 1)[0] if msg else "UNKNOWN"
                 last_error_code = code
                 key_events.append({"index": idx, "timestamp": parts[0], "code": code, "message": msg})
+            if event == "INFO" and msg.startswith("BAUD_HINT "):
+                hint = msg.split(" ", 1)[1].strip().lower()
+                if hint in {"higher", "lower", "unknown"}:
+                    baud_direction = hint
 
         max_gap_ms = self._max_gap_ms(ts_values)
         lines_per_sec = self._lines_per_sec(lines_count=len(lines), ts_values=ts_values)
@@ -62,6 +67,7 @@ class AnalystAgent:
             "last_error_code": last_error_code,
             "uart_line_count": len(lines),
             "signature_valid": signature_valid,
+            "baud_direction": baud_direction,
         }
 
         result = AnalysisResult(pass_fail=pass_fail, metrics=metrics, key_events=key_events)

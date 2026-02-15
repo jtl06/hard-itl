@@ -48,6 +48,7 @@ class Runner:
         case_id: str,
         run_index: int,
         params: dict[str, Any],
+        eval_context: dict[str, Any] | None = None,
         mode: str = "mock",
         uart_line_callback: Callable[[str], None] | None = None,
         emulate_timing: bool = False,
@@ -91,6 +92,7 @@ class Runner:
         uart_lines, uart_pass, capture_note, detected_port = capture_uart(
             run_id=run_id,
             params=params,
+            eval_context=eval_context,
             mode=mode,
             serial_port=serial_port,
             baud=capture_baud,

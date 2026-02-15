@@ -102,6 +102,7 @@ def run_case(
     nim_orchestrator = NIMOrchestrator() if nim_enabled else None
 
     case_cfg = cfg.get("cases", {}).get(case_id, {})
+    hidden_eval_context: dict[str, Any] = {}
     params = {
         "uart_rate": int(case_cfg.get("initial_uart_rate", 1000000)),
         "buffer_size": int(case_cfg.get("initial_buffer_size", 16)),
@@ -111,9 +112,11 @@ def run_case(
         selected_target = target_baud if target_baud > 0 else default_target_baud
         params = {
             "guess_baud": int(case_cfg.get("initial_guess_baud", 57600)),
-            "target_baud": selected_target,
             "baud_probe_idx": 0,
+            "last_baud_direction": "unknown",
+            "last_baud_guess": int(case_cfg.get("initial_guess_baud", 57600)),
         }
+        hidden_eval_context["target_baud"] = selected_target
     elif case_id == "framing_hunt":
         selected_target_frame = target_frame or str(case_cfg.get("target_frame", "8N1"))
         params = {
@@ -195,6 +198,10 @@ def run_case(
             case_id=case_id,
             run_index=run_index,
             params=params,
+            eval_context={
+                **hidden_eval_context,
+                "baud_hint_mode": "unknown" if run_index <= 2 else "directional",
+            } if case_id == "uart_demo" else None,
             mode=mode,
             uart_line_callback=_on_uart_line,
             emulate_timing=(mode == "mock" and (state_path is not None or live_uart or verbose)),
@@ -639,7 +646,11 @@ def _target_value(params: dict[str, Any]) -> Any:
     if not g:
         return ""
     t = _target_key_for_guess(g)
-    return params.get(t, "") if t else ""
+    if not t:
+        return ""
+    if t not in params and g == "guess_baud":
+        return "unknown"
+    return params.get(t, "")
 
 
 def main() -> None:

@@ -58,18 +58,17 @@ class TriageAgent:
 
         if "guess_baud" in params:
             guess = int(params.get("guess_baud", 115200))
-            target = int(params.get("target_baud", 115200))
-            # Deterministic convergence in a few runs.
-            if guess == target:
-                return [params]
-            step = max(1, abs(target - guess) // 2)
-            if guess < target:
-                nxt = min(target, guess + step)
-            else:
-                nxt = max(target, guess - step)
+            direction = str(analysis.metrics.get("baud_direction", "unknown")).lower()
+            if direction == "higher":
+                nxt = min(1000000, guess * 2)
+                return [{"guess_baud": nxt}]
+            if direction == "lower":
+                nxt = max(9600, guess // 2)
+                return [{"guess_baud": nxt}]
             return [
-                {"guess_baud": target, "target_baud": target},
-                {"guess_baud": nxt, "target_baud": target},
+                {"guess_baud": 57600},
+                {"guess_baud": 115200},
+                {"guess_baud": 230400},
             ]
         if "guess_frame" in params:
             target = str(params.get("target_frame", "8N1"))

@@ -83,6 +83,7 @@ def wait_for_serial_port(
 def capture_uart(
     run_id: str,
     params: dict[str, Any],
+    eval_context: dict[str, Any] | None = None,
     mode: str = "mock",
     serial_port: str = "",
     baud: int = 115200,
@@ -95,6 +96,7 @@ def capture_uart(
         lines, passed, note = _simulate_mock_uart(
             run_id,
             params,
+            eval_context=eval_context,
             line_callback=line_callback,
             emulate_timing=emulate_timing,
         )
@@ -194,6 +196,7 @@ def _configure_serial_port(port: str, baud: int) -> subprocess.CompletedProcess[
 def _simulate_mock_uart(
     run_id: str,
     params: dict[str, Any],
+    eval_context: dict[str, Any] | None = None,
     line_callback: Callable[[str], None] | None = None,
     emulate_timing: bool = False,
 ) -> tuple[list[str], bool, str]:
@@ -201,6 +204,7 @@ def _simulate_mock_uart(
         return _simulate_mock_baud_hunt(
             run_id=run_id,
             params=params,
+            eval_context=eval_context,
             line_callback=line_callback,
             emulate_timing=emulate_timing,
         )
@@ -286,16 +290,18 @@ def _parse_prefix_timestamp(line: str) -> datetime | None:
 def _simulate_mock_baud_hunt(
     run_id: str,
     params: dict[str, Any],
+    eval_context: dict[str, Any] | None = None,
     line_callback: Callable[[str], None] | None = None,
     emulate_timing: bool = False,
 ) -> tuple[list[str], bool, str]:
     guess = int(params.get("guess_baud", 115200))
-    target = int(params.get("target_baud", 115200))
+    target = int((eval_context or {}).get("target_baud", params.get("target_baud", 115200)))
+    hint_mode = str((eval_context or {}).get("baud_hint_mode", "unknown"))
 
     t0 = datetime.now(timezone.utc)
     lines = [
         f"{_iso(t0)} RUN_START {run_id}",
-        f"{_iso(t0 + timedelta(milliseconds=5))} INFO cfg guess_baud={guess} target_baud={target}",
+        f"{_iso(t0 + timedelta(milliseconds=5))} INFO cfg guess_baud={guess}",
         f"{_iso(t0 + timedelta(milliseconds=12))} INFO tx PING",
     ]
 
@@ -310,9 +316,13 @@ def _simulate_mock_baud_hunt(
         passed = True
         note = "mock pass: guessed baud matches target"
     else:
+        hint = "unknown"
+        if hint_mode == "directional":
+            hint = "higher" if guess < target else "lower"
         lines.extend(
             [
-                f"{_iso(t0 + timedelta(milliseconds=20))} ERROR BAUD_MISMATCH guessed={guess} expected={target}",
+                f"{_iso(t0 + timedelta(milliseconds=20))} ERROR BAUD_MISMATCH guessed={guess}",
+                f"{_iso(t0 + timedelta(milliseconds=24))} INFO BAUD_HINT {hint}",
                 f"{_iso(t0 + timedelta(milliseconds=30))} INFO test_result FAIL",
                 f"{_iso(t0 + timedelta(milliseconds=40))} RUN_END {run_id}",
             ]
