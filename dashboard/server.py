@@ -86,7 +86,8 @@ HTML = """<!doctype html>
         "planner coder load"
         "debugger coordinator validator"
         "overall overall uart"
-        "overall overall tracker";
+        "overall overall tracker"
+        "overall overall system";
       gap: 12px;
     }
     .card {
@@ -122,6 +123,7 @@ HTML = """<!doctype html>
     .area-overall { grid-area: overall; min-height: 350px; }
     .area-uart { grid-area: uart; }
     .area-tracker { grid-area: tracker; }
+    .area-system { grid-area: system; }
     .area-load { min-height: 180px; }
     .chart-grid {
       display: grid;
@@ -160,7 +162,8 @@ HTML = """<!doctype html>
           "load load"
           "validator validator"
           "overall overall"
-          "uart tracker";
+          "uart tracker"
+          "system system";
       }
     }
     @media (max-width: 920px) {
@@ -175,7 +178,8 @@ HTML = """<!doctype html>
           "validator"
           "overall"
           "uart"
-          "tracker";
+          "tracker"
+          "system";
       }
     }
   </style>
@@ -237,6 +241,12 @@ HTML = """<!doctype html>
           <select id=\"agent_mode\">
             <option value=\"sequential\">sequential</option>
             <option value=\"parallel\">parallel</option>
+          </select>
+        </label>
+        <label>NIM Model
+          <select id=\"nim_model\">
+            <option value=\"nvidia/nemotron-nano-9b-v2\">Nemotron Nano 9B</option>
+            <option value=\"nvidia/nemotron-30b\">Nemotron 30B</option>
           </select>
         </label>
         <button id=\"start_btn\">Start Run</button>
@@ -306,6 +316,11 @@ HTML = """<!doctype html>
         <h3>Run Tracker</h3>
         <pre id=\"history\">No runs yet.</pre>
       </article>
+      <article class=\"card area-system\">
+        <h3>System Utilization</h3>
+        <div class=\"meta\">From <code>nvidia-smi</code> (updates every 0.5s).</div>
+        <pre id=\"system_stats\">Waiting for GPU metrics...</pre>
+      </article>
     </section>
   </div>
 
@@ -318,6 +333,7 @@ async function startRun() {
       runs: Number(document.getElementById('runs').value || 8),
       mode: document.getElementById('mode').value,
       agent_mode: document.getElementById('agent_mode').value,
+      nim_model: document.getElementById('nim_model').value,
     };
     if (caseId === 'uart_demo') {
       payload.target_baud = Number(document.getElementById('target_baud').value || 0);
@@ -432,7 +448,37 @@ function renderStateBundle(bundle) {
     : `process: idle` + (p.exit_code !== null && p.exit_code !== undefined ? ` (last exit=${p.exit_code})` : '');
   const logMsg = (p.log_tail || []).join('\\n');
   setText('proc_info', procMsg + (logMsg ? '\\n' + logMsg : ''));
+  renderSystemStats(p.gpu || {});
   renderAgentChart(state);
+}
+
+function renderSystemStats(gpu) {
+  if (!gpu || gpu.available === false) {
+    setText('system_stats', gpu.message || 'nvidia-smi unavailable');
+    return;
+  }
+  const vramPct = (gpu.vram_total_mb || 0) > 0
+    ? ((Number(gpu.vram_used_mb || 0) / Number(gpu.vram_total_mb || 1)) * 100).toFixed(1)
+    : '0.0';
+  const lines = [
+    `GPUs: ${gpu.gpu_count ?? 'n/a'}`,
+    `Compute Util: ${Number(gpu.util_percent || 0).toFixed(1)}%`,
+    `VRAM: ${gpu.vram_used_mb || 0} / ${gpu.vram_total_mb || 0} MB (${vramPct}%)`,
+    `Power: ${Number(gpu.power_w || 0).toFixed(1)} / ${Number(gpu.power_limit_w || 0).toFixed(1)} W`,
+    `Temp: ${Number(gpu.temp_c || 0).toFixed(1)} C`,
+  ];
+  if (gpu.per_gpu && gpu.per_gpu.length) {
+    lines.push('');
+    lines.push('Per-GPU:');
+    for (const g of gpu.per_gpu) {
+      lines.push(
+        `#${g.index}: util=${Number(g.util || 0).toFixed(1)}% ` +
+        `vram=${g.mem_used || 0}/${g.mem_total || 0}MB ` +
+        `power=${Number(g.power || 0).toFixed(1)}W`
+      );
+    }
+  }
+  setText('system_stats', lines.join('\\n'));
 }
 
 function updateTargetVisibility() {
@@ -551,6 +597,7 @@ class Handler(BaseHTTPRequestHandler):
             target_parity = str(payload.get("target_parity", ""))
             target_magic = str(payload.get("target_magic", ""))
             agent_mode = str(payload.get("agent_mode", "sequential"))
+            nim_model = str(payload.get("nim_model", "")).strip()
 
             with LOCK:
                 global PROCESS
@@ -621,6 +668,8 @@ class Handler(BaseHTTPRequestHandler):
                     target_magic,
                     "--nim-mode",
                     agent_mode,
+                    "--nim-model",
+                    nim_model,
                     "--state-file",
                     str(STATE_PATH),
                     "--live-uart",
@@ -767,7 +816,94 @@ class Handler(BaseHTTPRequestHandler):
             running = PROCESS is not None and PROCESS.poll() is None
             pid = PROCESS.pid if PROCESS is not None else None
             exit_code = None if running or PROCESS is None else PROCESS.poll()
-        return {"running": running, "pid": pid, "exit_code": exit_code, "log_tail": self._read_log_tail()}
+        return {
+            "running": running,
+            "pid": pid,
+            "exit_code": exit_code,
+            "log_tail": self._read_log_tail(),
+            "gpu": self._read_gpu_stats(),
+        }
+
+    def _read_gpu_stats(self) -> dict:
+        cmd = [
+            "nvidia-smi",
+            "--query-gpu=index,utilization.gpu,memory.used,memory.total,power.draw,power.limit,temperature.gpu",
+            "--format=csv,noheader,nounits",
+        ]
+        try:
+            cp = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=0.8)
+        except FileNotFoundError:
+            return {"available": False, "message": "nvidia-smi not found"}
+        except Exception as exc:
+            return {"available": False, "message": f"nvidia-smi failed: {exc}"}
+
+        if cp.returncode != 0:
+            detail = cp.stderr.strip() or cp.stdout.strip() or f"exit {cp.returncode}"
+            return {"available": False, "message": f"nvidia-smi error: {detail}"}
+
+        rows = [ln.strip() for ln in cp.stdout.splitlines() if ln.strip()]
+        if not rows:
+            return {"available": False, "message": "nvidia-smi returned no GPU rows"}
+
+        def _f(text: str) -> float:
+            text = text.strip()
+            if not text or text.upper() == "N/A":
+                return 0.0
+            try:
+                return float(text)
+            except ValueError:
+                return 0.0
+
+        per_gpu: list[dict] = []
+        util_total = 0.0
+        mem_used_total = 0.0
+        mem_total_total = 0.0
+        power_total = 0.0
+        power_limit_total = 0.0
+        temp_total = 0.0
+        for row in rows:
+            parts = [p.strip() for p in row.split(",")]
+            if len(parts) < 7:
+                continue
+            idx = int(_f(parts[0]))
+            util = _f(parts[1])
+            mem_used = _f(parts[2])
+            mem_total = _f(parts[3])
+            power = _f(parts[4])
+            power_limit = _f(parts[5])
+            temp = _f(parts[6])
+            per_gpu.append(
+                {
+                    "index": idx,
+                    "util": util,
+                    "mem_used": int(mem_used),
+                    "mem_total": int(mem_total),
+                    "power": power,
+                    "power_limit": power_limit,
+                    "temp": temp,
+                }
+            )
+            util_total += util
+            mem_used_total += mem_used
+            mem_total_total += mem_total
+            power_total += power
+            power_limit_total += power_limit
+            temp_total += temp
+
+        gpu_count = len(per_gpu)
+        if gpu_count == 0:
+            return {"available": False, "message": "unable to parse nvidia-smi output"}
+        return {
+            "available": True,
+            "gpu_count": gpu_count,
+            "util_percent": util_total / gpu_count,
+            "vram_used_mb": int(mem_used_total),
+            "vram_total_mb": int(mem_total_total),
+            "power_w": power_total,
+            "power_limit_w": power_limit_total,
+            "temp_c": temp_total / gpu_count,
+            "per_gpu": per_gpu,
+        }
 
     def _send_html(self, html: str) -> None:
         body = html.encode("utf-8")

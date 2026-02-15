@@ -141,6 +141,7 @@ UI sections:
 Top controls:
 - `Case`, `Runs`, `Mode` (`mock`/`real`)
 - `Agent Mode` (`sequential` tag-team or `parallel`)
+- `NIM Model` (`Nemotron Nano 9B` or `Nemotron 30B`)
 - one case-specific target input shown at a time:
   - baud, frame, parity, or magic
 
