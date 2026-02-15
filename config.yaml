@@ -1,6 +1,6 @@
 runner:
-  flash_method: openocd
-  openocd_cfg: "/usr/share/openocd/scripts/board/pico2.cfg"
+  flash_method: picotool
+  openocd_cfg: ""
   serial_port: ""
   serial_baud: 115200
   serial_timeout_s: 8
