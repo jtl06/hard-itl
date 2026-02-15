@@ -107,6 +107,7 @@ def run_case(
         params = {
             "guess_baud": int(case_cfg.get("initial_guess_baud", 57600)),
             "target_baud": selected_target,
+            "baud_probe_idx": 0,
         }
     elif case_id == "framing_hunt":
         selected_target_frame = target_frame or str(case_cfg.get("target_frame", "8N1"))

@@ -4,9 +4,13 @@ from schemas.types import AnalysisResult, TriageResult
 
 
 class PlannerAgent:
+    # Symmetric probe sequence around target for demo visibility:
+    # below, above, tighter below, tighter above, then settle.
+    _BAUD_PROBE_OFFSETS = [-38400, 38400, -19200, 19200, -9600, 9600, 0]
+
     def initial_request(self) -> dict[str, int]:
         # Default initial search point for baud-hunt demos.
-        return {"guess_baud": 115200, "target_baud": 115200}
+        return {"guess_baud": 115200, "target_baud": 115200, "baud_probe_idx": 0}
 
     def next_request(
         self,
@@ -19,19 +23,17 @@ class PlannerAgent:
 
         # Baud-hunt mode: guided search around prior guess.
         if "guess_baud" in previous_params:
-            if triage.next_experiments:
-                nxt = triage.next_experiments[0]
-                return {
-                    "guess_baud": int(nxt.get("guess_baud", previous_params["guess_baud"])),
-                    "target_baud": int(nxt.get("target_baud", previous_params.get("target_baud", 115200))),
-                }
-            guess = int(previous_params.get("guess_baud", 115200))
             target = int(previous_params.get("target_baud", 115200))
-            if guess < target:
-                guess = min(target, guess * 2)
-            else:
-                guess = max(target, guess // 2)
-            return {"guess_baud": guess, "target_baud": target}
+            idx = int(previous_params.get("baud_probe_idx", 0))
+            if idx >= len(self._BAUD_PROBE_OFFSETS):
+                idx = len(self._BAUD_PROBE_OFFSETS) - 1
+            offset = self._BAUD_PROBE_OFFSETS[idx]
+            next_guess = max(1200, int(target + offset))
+            return {
+                "guess_baud": next_guess,
+                "target_baud": target,
+                "baud_probe_idx": idx + 1,
+            }
         if "guess_frame" in previous_params:
             if triage.next_experiments:
                 nxt = triage.next_experiments[0]
