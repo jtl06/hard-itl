@@ -679,7 +679,8 @@ def main() -> None:
             )
             _write_state(Path(args.state_file), fail_state)
         print(f"Runner configuration error: {exc}")
-        print("Set runner.build_cmd and runner.real_uf2_path in config.yaml before using --mode real.")
+        if "real_uf2_path" in str(exc) or "build command failed" in str(exc):
+            print("Check runner.build_cmd, runner.real_uf2_path, and PICO_SDK_PATH for --mode real.")
         raise SystemExit(2)
     if args.json:
         print(json.dumps(rows, indent=2))

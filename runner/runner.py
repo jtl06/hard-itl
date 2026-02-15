@@ -165,10 +165,12 @@ class Runner:
                     check=False,
                 )
                 if proc.returncode != 0:
+                    stdout_tail = proc.stdout.strip()[-1200:]
+                    stderr_tail = proc.stderr.strip()[-1200:]
                     msg = (
                         "build command failed. "
                         f"cmd='{build_cmd}' rc={proc.returncode} "
-                        f"stdout='{proc.stdout.strip()[:200]}' stderr='{proc.stderr.strip()[:200]}'"
+                        f"stdout_tail='{stdout_tail}' stderr_tail='{stderr_tail}'"
                     )
                     raise FlashError(msg)
 

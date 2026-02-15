@@ -5,6 +5,7 @@ RP_BUILD := $(BUILD_DIR)/rp2350
 
 TARGET_MAGIC_HEX ?= 0xC0FFEE42
 REQUIRE_PICO_SDK ?= 0
+PICO_BOARD ?= pico2
 
 DEMO_TARGETS := rp2350_uart_demo rp2350_framing_hunt rp2350_parity_hunt rp2350_signature_check
 
@@ -46,7 +47,12 @@ $(RP_BUILD)/%.uf2: CMakeLists.txt rp2350_uart_demo.c rp2350_framing_hunt.c rp235
 			printf "generated_utc=%s\n" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$(RP_BUILD)/$*.uf2"; \
 		fi; \
 	else \
-		cmake -S . -B "$(RP_BUILD)" -DPICO_BOARD=pico2 -DTARGET_MAGIC_HEX="$(TARGET_MAGIC_HEX)"; \
+		if [ ! -f "$$PICO_SDK_PATH/src/boards/include/boards/$(PICO_BOARD).h" ]; then \
+			echo "WARN: board definition '$(PICO_BOARD)' not found in $$PICO_SDK_PATH; continuing anyway."; \
+			echo "Expected: $$PICO_SDK_PATH/src/boards/include/boards/$(PICO_BOARD).h"; \
+			echo "If build fails, set PICO_BOARD to a valid board for your Tiny2350 SDK."; \
+		fi; \
+		cmake -S . -B "$(RP_BUILD)" -DPICO_BOARD="$(PICO_BOARD)" -DTARGET_MAGIC_HEX="$(TARGET_MAGIC_HEX)"; \
 		cmake --build "$(RP_BUILD)" -j --target "$*"; \
 	fi
 

@@ -44,3 +44,9 @@ For real hardware runs, enforce a real SDK build (no placeholders):
 ```bash
 make -C firmware REQUIRE_PICO_SDK=1 rp2350_uart_demo
 ```
+
+If your SDK/board differs, you can override board selection:
+
+```bash
+make -C firmware REQUIRE_PICO_SDK=1 PICO_BOARD=pico2 rp2350_uart_demo
+```
