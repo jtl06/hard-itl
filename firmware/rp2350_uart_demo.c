@@ -2,22 +2,24 @@
 #include "pico/stdlib.h"
 
 // RP2350/Pico UART marker demo.
-// Continuously emits RUN_START / RUN_END markers expected by the HIL runner
-// so capture can succeed even if it begins after device boot.
+// Emits RUN_START / RUN_END markers expected by the HIL runner.
 int main(void) {
     stdio_init_all();
     sleep_ms(1200);
 
-    uint32_t cycle = 0;
-    while (true) {
-        printf("RUN_START cycle_%lu\n", (unsigned long)cycle);
-        printf("INFO boot rp2350_uart_demo cycle=%lu\n", (unsigned long)cycle);
-        for (int i = 0; i < 5; ++i) {
-            printf("INFO heartbeat %d cycle=%lu\n", i, (unsigned long)cycle);
-            sleep_ms(200);
-        }
-        printf("RUN_END cycle_%lu\n", (unsigned long)cycle);
-        cycle++;
+    const char *run_id = "firmware_boot";
+    printf("RUN_START %s\n", run_id);
+    printf("INFO boot rp2350_uart_demo\n");
+
+    for (int i = 0; i < 5; ++i) {
+        printf("INFO heartbeat %d\n", i);
         sleep_ms(300);
+    }
+
+    printf("RUN_END %s\n", run_id);
+
+    while (true) {
+        printf("INFO idle\n");
+        sleep_ms(1000);
     }
 }
