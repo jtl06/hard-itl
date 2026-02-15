@@ -130,7 +130,12 @@ HTML = """<!doctype html>
     .area-system { grid-area: system; }
     .area-load { min-height: 180px; }
     .area-uart, .area-tracker, .area-system { min-height: 140px; }
-    #overall_output { max-height: 170px; }
+    .area-overall, .area-tracker { display: flex; flex-direction: column; }
+    #overall_output, #history {
+      flex: 1;
+      height: 100%;
+      max-height: none;
+    }
     .chart-grid {
       display: grid;
       gap: 8px;
@@ -458,8 +463,16 @@ function renderStateBundle(bundle) {
 }
 
 function renderSystemStats(gpu) {
+  const el = document.getElementById('system_stats');
+  if (!el) return;
+  const hasExisting = Boolean((el.textContent || '').trim()) &&
+    !String(el.textContent || '').startsWith('Waiting for GPU metrics');
+
+  // Ignore transient unavailable/N-A samples and keep last good values on screen.
   if (!gpu || gpu.available === false) {
-    setText('system_stats', gpu.message || 'nvidia-smi unavailable');
+    if (!hasExisting) {
+      setText('system_stats', gpu?.message || 'nvidia-smi unavailable');
+    }
     return;
   }
   const vramPct = (gpu.vram_total_mb || 0) > 0
