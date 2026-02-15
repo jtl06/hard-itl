@@ -22,6 +22,10 @@ GPU_CACHE: dict[str, object] = {
     "has_good": False,
     "data": {"available": False, "message": "Waiting for GPU metrics..."},
 }
+GPU_UNIFIED_MEM_NOTE = (
+    "Unified memory expected on DGX Spark. nvidia-smi may not report dedicated VRAM usage.\n"
+    "Use: top, htop, free"
+)
 
 HTML = """<!doctype html>
 <html>
@@ -861,7 +865,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             cp = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=1.2)
         except FileNotFoundError:
-            data = {"available": False, "message": "nvidia-smi not found"}
+            data = {"available": False, "message": f"nvidia-smi not found\n{GPU_UNIFIED_MEM_NOTE}"}
             GPU_CACHE["ts"] = now
             GPU_CACHE["data"] = data
             return data
@@ -873,7 +877,7 @@ class Handler(BaseHTTPRequestHandler):
                 GPU_CACHE["ts"] = now
                 GPU_CACHE["data"] = stale
                 return stale
-            data = {"available": False, "message": f"nvidia-smi failed: {exc}"}
+            data = {"available": False, "message": f"nvidia-smi failed: {exc}\n{GPU_UNIFIED_MEM_NOTE}"}
             GPU_CACHE["ts"] = now
             GPU_CACHE["data"] = data
             return data
@@ -887,7 +891,7 @@ class Handler(BaseHTTPRequestHandler):
                 GPU_CACHE["ts"] = now
                 GPU_CACHE["data"] = stale
                 return stale
-            data = {"available": False, "message": f"nvidia-smi error: {detail}"}
+            data = {"available": False, "message": f"nvidia-smi error: {detail}\n{GPU_UNIFIED_MEM_NOTE}"}
             GPU_CACHE["ts"] = now
             GPU_CACHE["data"] = data
             return data
@@ -954,6 +958,18 @@ class Handler(BaseHTTPRequestHandler):
         gpu_count = len(per_gpu)
         if gpu_count == 0:
             data = {"available": False, "message": "unable to parse nvidia-smi output"}
+            GPU_CACHE["ts"] = now
+            GPU_CACHE["data"] = data
+            return data
+        if gpu_count != 1:
+            if bool(GPU_CACHE.get("has_good", False)):
+                stale = dict(GPU_CACHE.get("data", {}))
+                stale["sample_status"] = "stale"
+                stale["message"] = f"ignored sample: expected 1 GPU, got {gpu_count}"
+                GPU_CACHE["ts"] = now
+                GPU_CACHE["data"] = stale
+                return stale
+            data = {"available": False, "message": f"ignored sample: expected 1 GPU, got {gpu_count}"}
             GPU_CACHE["ts"] = now
             GPU_CACHE["data"] = data
             return data
