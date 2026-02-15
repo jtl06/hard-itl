@@ -64,6 +64,7 @@ HTML = """<!doctype html>
     .progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #2d75ff, #33d17a); transition: width 250ms ease; }
     .status-running { color: var(--run); }
     .status-completed { color: var(--ok); }
+    .status-fallback { color: var(--warn); }
     .status-failed, .status-error { color: var(--err); }
     label { font-size: 13px; color: var(--muted); }
     input, select, button {
@@ -110,6 +111,31 @@ HTML = """<!doctype html>
       grid-template-columns: 1.2fr 1fr;
       gap: 12px;
     }
+    .chart-grid {
+      display: grid;
+      gap: 8px;
+    }
+    .chart-row {
+      display: grid;
+      grid-template-columns: 90px 1fr 88px;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .bar-wrap {
+      width: 100%;
+      height: 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #0a1528;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      transition: width 280ms ease;
+      background: linear-gradient(90deg, #4da3ff, #33d17a);
+    }
     @media (max-width: 920px) {
       .grid, .layout-bottom { grid-template-columns: 1fr; }
     }
@@ -153,14 +179,14 @@ HTML = """<!doctype html>
       </article>
       <article class=\"card\">
         <h3>Debugger</h3>
-        <div class=\"meta\">(was Critic) checks feasibility and risks.</div>
+        <div class=\"meta\">Checks feasibility and risks.</div>
         <div id=\"critic_status\" class=\"agent-status\">idle</div>
         <div id=\"critic_task\" class=\"meta\">Waiting for run.</div>
         <pre id=\"critic_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
       </article>
       <article class=\"card\">
         <h3>Coordinator</h3>
-        <div class=\"meta\">(was Summarizer) merges outputs into one runbook.</div>
+        <div class=\"meta\">Merges outputs into one runbook.</div>
         <div id=\"summarizer_status\" class=\"agent-status\">idle</div>
         <div id=\"summarizer_task\" class=\"meta\">Waiting for run.</div>
         <pre id=\"summarizer_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
@@ -181,6 +207,18 @@ HTML = """<!doctype html>
     <section class=\"card\">
       <h3>Run Tracker</h3>
       <pre id=\"history\">No runs yet.</pre>
+    </section>
+
+    <section class=\"card\">
+      <h3>Agent Load / Time</h3>
+      <div class=\"meta\">Cumulative active-time split (updates every 2s).</div>
+      <div class=\"chart-grid\">
+        <div class=\"chart-row\"><div>Planner</div><div class=\"bar-wrap\"><div id=\"bar_planner\" class=\"bar-fill\"></div></div><div id=\"pct_planner\">0.0%</div></div>
+        <div class=\"chart-row\"><div>Coder</div><div class=\"bar-wrap\"><div id=\"bar_coder\" class=\"bar-fill\"></div></div><div id=\"pct_coder\">0.0%</div></div>
+        <div class=\"chart-row\"><div>Debugger</div><div class=\"bar-wrap\"><div id=\"bar_critic\" class=\"bar-fill\"></div></div><div id=\"pct_critic\">0.0%</div></div>
+        <div class=\"chart-row\"><div>Coordinator</div><div class=\"bar-wrap\"><div id=\"bar_summarizer\" class=\"bar-fill\"></div></div><div id=\"pct_summarizer\">0.0%</div></div>
+      </div>
+      <div id=\"chart_meta\" class=\"meta\"></div>
     </section>
   </div>
 
@@ -222,7 +260,12 @@ function applyAgentStatus(id, status) {
   const el = document.getElementById(id);
   if (!el) return;
   el.textContent = (status || 'idle');
-  el.style.color = status === 'done' ? 'var(--ok)' : status === 'running' ? 'var(--run)' : status === 'error' ? 'var(--err)' : 'var(--muted)';
+  el.style.color =
+    status === 'done' ? 'var(--ok)' :
+    status === 'running' ? 'var(--run)' :
+    status === 'fallback' ? 'var(--warn)' :
+    status === 'error' ? 'var(--err)' :
+    'var(--muted)';
 }
 
 function renderStateBundle(bundle) {
@@ -258,6 +301,32 @@ function renderStateBundle(bundle) {
     : `process: idle` + (p.exit_code !== null && p.exit_code !== undefined ? ` (last exit=${p.exit_code})` : '');
   const logMsg = (p.log_tail || []).join('\\n');
   setText('proc_info', procMsg + (logMsg ? '\\n' + logMsg : ''));
+  renderAgentChart(state);
+}
+
+function renderAgentChart(state) {
+  const m = state.agent_metrics || {};
+  const roles = ['planner', 'coder', 'critic', 'summarizer'];
+  const now = Date.now() / 1000;
+  const vals = {};
+  let total = 0;
+  for (const r of roles) {
+    const e = m[r] || {};
+    let active = Number(e.active_s || 0);
+    if ((e.last_status || '') === 'running') {
+      active += Math.max(0, now - Number(e.last_change_epoch || now));
+    }
+    vals[r] = active;
+    total += active;
+  }
+  for (const r of roles) {
+    const pct = total > 0 ? (vals[r] / total) * 100 : 0;
+    const bar = document.getElementById(`bar_${r}`);
+    const label = document.getElementById(`pct_${r}`);
+    if (bar) bar.style.width = `${pct}%`;
+    if (label) label.textContent = `${pct.toFixed(1)}% (${vals[r].toFixed(1)}s)`;
+  }
+  setText('chart_meta', `Total active time: ${total.toFixed(1)}s`);
 }
 
 async function refreshOnce() {
@@ -287,7 +356,7 @@ function initSSE() {
 document.getElementById('start_btn').addEventListener('click', startRun);
 refreshOnce();
 initSSE();
-setInterval(refreshOnce, 1500);
+setInterval(refreshOnce, 2000);
 </script>
 </body>
 </html>

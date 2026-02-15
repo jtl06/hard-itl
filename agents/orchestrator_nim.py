@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -26,6 +27,7 @@ class NIMOrchestrator:
         self.chat_url = os.getenv("NIM_CHAT_URL", "http://localhost:8000/v1/chat/completions")
         self.model = os.getenv("NIM_MODEL", "nvidia/nemotron-nano-9b-v2")
         self.timeout_s = float(os.getenv("NIM_TIMEOUT_S", "3.0"))
+        self.min_visible_running_s = float(os.getenv("NIM_MIN_RUNNING_S", "0.6"))
         self.last_fanout: list[AgentOutput] = []
 
     async def run(
@@ -40,8 +42,14 @@ class NIMOrchestrator:
                 AgentOutput("critic", "Fallback: keep hardware access constrained to runner module."),
             ]
             if status_callback is not None:
+                status_callback("planner", "running", "Planning next experiments from UART evidence.")
+                status_callback("coder", "running", "Drafting minimal instrumentation improvements.")
+                status_callback("critic", "running", "Reviewing feasibility and runner-only constraints.")
+                await asyncio.sleep(0.5)
                 for item in self.last_fanout:
                     status_callback(item.role, "fallback", item.text)
+                status_callback("summarizer", "running", "Merging planner/coder/debugger updates.")
+                await asyncio.sleep(0.3)
                 status_callback("summarizer", "fallback", "Using deterministic fallback summary.")
             return self._fallback_summary("aiohttp missing", user_prompt)
 
@@ -94,6 +102,7 @@ class NIMOrchestrator:
     ) -> AgentOutput:
         if status_callback is not None:
             status_callback(role, "running", "Working on current evidence bundle.")
+        t0 = time.perf_counter()
         payload = {
             "model": self.model,
             "messages": [
@@ -110,6 +119,9 @@ class NIMOrchestrator:
         text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
         if not text:
             text = f"{role} produced empty output"
+        elapsed = time.perf_counter() - t0
+        if elapsed < self.min_visible_running_s:
+            await asyncio.sleep(self.min_visible_running_s - elapsed)
         if status_callback is not None:
             status_callback(role, "done", text)
         return AgentOutput(role=role, text=text)

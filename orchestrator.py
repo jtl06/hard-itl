@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -106,10 +107,34 @@ def run_case(
     rows: list[dict[str, Any]] = []
     for run_index in range(1, runs + 1):
         _set_overall(state, status="running", message=f"Running {run_index}/{runs}", current_run=run_index)
-        _set_agent(state, "planner", "running", _reasoning_summary(state, "planner", "running", "pre-run planning"))
-        _set_agent(state, "coder", "idle", _reasoning_summary(state, "coder", "idle", "waiting for evidence"))
-        _set_agent(state, "critic", "idle", _reasoning_summary(state, "critic", "idle", "waiting for evidence"))
-        _set_agent(state, "summarizer", "idle", _reasoning_summary(state, "summarizer", "idle", "waiting for fan-in"))
+        _set_agent(
+            state,
+            "planner",
+            "running",
+            "Planning next run parameters",
+            _reasoning_summary(state, "planner", "running", "pre-run planning"),
+        )
+        _set_agent(
+            state,
+            "coder",
+            "running",
+            "Preparing instrumentation strategy",
+            _reasoning_summary(state, "coder", "running", "preparing instrumentation"),
+        )
+        _set_agent(
+            state,
+            "critic",
+            "running",
+            "Preparing feasibility checks",
+            _reasoning_summary(state, "critic", "running", "preparing checks"),
+        )
+        _set_agent(
+            state,
+            "summarizer",
+            "running",
+            "Waiting to merge agent outputs",
+            _reasoning_summary(state, "summarizer", "running", "awaiting fan-in"),
+        )
         if state_path is not None:
             _write_state(state_path, state)
         if live or verbose:
@@ -134,13 +159,43 @@ def run_case(
         )
         run_dir = Path(run_result["run_dir"])
 
-        _set_agent(state, "planner", "done", "Run params fixed for this iteration.")
+        _set_agent(
+            state,
+            "planner",
+            "done",
+            "Run params fixed for this iteration",
+            _reasoning_summary(state, "planner", "done", "params selected"),
+        )
         _set_overall(state, status="running", message=f"Analyzing run {run_index}/{runs}", current_run=run_index)
         _update_latest_uart(state, run_dir=run_dir, tail_lines=uart_tail_lines)
         if state_path is not None:
             _write_state(state_path, state)
 
         analysis = analyst.analyze(run_dir)
+        _set_agent(
+            state,
+            "coder",
+            "running",
+            "Drafting instrumentation/fix suggestions",
+            _reasoning_summary(state, "coder", "running", "analysis complete"),
+        )
+        _set_agent(
+            state,
+            "critic",
+            "running",
+            "Reviewing risk and feasibility",
+            _reasoning_summary(state, "critic", "running", "analysis complete"),
+        )
+        _set_agent(
+            state,
+            "summarizer",
+            "running",
+            "Merging planner/coder/debugger outputs",
+            _reasoning_summary(state, "summarizer", "running", "fan-in"),
+        )
+        if state_path is not None:
+            _write_state(state_path, state)
+
         triage = triage_agent.triage(run_dir, analysis=analysis, params=params)
         nim_summary = _nim_guidance(
             nim_orchestrator,
@@ -159,6 +214,27 @@ def run_case(
         )
         nim_next_experiments = parse_next_experiments(nim_summary)
         state["overall_output"] = nim_summary
+        _set_agent(
+            state,
+            "coder",
+            "done",
+            "Instrumentation proposal finalized",
+            _reasoning_summary(state, "coder", "done", "proposal finalized"),
+        )
+        _set_agent(
+            state,
+            "critic",
+            "done",
+            "Risk review finalized",
+            _reasoning_summary(state, "critic", "done", "risk review finalized"),
+        )
+        _set_agent(
+            state,
+            "summarizer",
+            "done",
+            "Merged runbook ready",
+            _reasoning_summary(state, "summarizer", "done", "merged output ready"),
+        )
         state["history"].append(
             {
                 "run": run_index,
@@ -192,8 +268,19 @@ def run_case(
             "buffer_size": params["buffer_size"],
             "error_count": analysis.metrics["error_count"],
             "run_dir": run_result["run_dir"],
+            "diagnostics": run_result.get("diagnostics", []),
         }
         rows.append(row)
+        if analysis.pass_fail != "pass":
+            diag_text = "; ".join(run_result.get("diagnostics", [])[-2:])
+            _set_overall(
+                state,
+                status="running",
+                message=f"Run {run_index} failed: {diag_text or 'see uart.log'}",
+                current_run=run_index,
+            )
+            if state_path is not None:
+                _write_state(state_path, state)
 
         if analysis.pass_fail != "pass" and nim_next_experiments:
             params = nim_next_experiments[0]
@@ -203,7 +290,13 @@ def run_case(
     _set_overall(state, status="completed", message="Run sequence complete", current_run=runs)
     for role in ("planner", "coder", "critic", "summarizer"):
         if state["agents"][role]["status"] == "running":
-            _set_agent(state, role, "done", state["agents"][role]["task"])
+            _set_agent(
+                state,
+                role,
+                "done",
+                state["agents"][role]["task"],
+                state["agents"][role]["fragment"],
+            )
     if state_path is not None:
         _write_state(state_path, state)
 
@@ -243,6 +336,7 @@ def _nim_guidance(
 
 def _init_state(case_id: str, runs: int, mode: str) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
+    now_epoch = time.time()
     return {
         "overall": {
             "status": "idle",
@@ -258,6 +352,12 @@ def _init_state(case_id: str, runs: int, mode: str) -> dict[str, Any]:
             "coder": {"status": "idle", "task": "Waiting", "fragment": "", "updated_at": now},
             "critic": {"status": "idle", "task": "Waiting", "fragment": "", "updated_at": now},
             "summarizer": {"status": "idle", "task": "Waiting", "fragment": "", "updated_at": now},
+        },
+        "agent_metrics": {
+            "planner": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": now_epoch},
+            "coder": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": now_epoch},
+            "critic": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": now_epoch},
+            "summarizer": {"active_s": 0.0, "last_status": "idle", "last_change_epoch": now_epoch},
         },
         "latest_uart": [],
         "last_analysis": {},
@@ -278,14 +378,30 @@ def _set_overall(state: dict[str, Any], status: str, message: str, current_run: 
     state["overall"]["updated_at"] = datetime.now(timezone.utc).isoformat()
 
 
-def _set_agent(state: dict[str, Any], role: str, status: str, task: str) -> None:
-    frag = task
+def _set_agent(state: dict[str, Any], role: str, status: str, task: str, fragment: str | None = None) -> None:
+    _update_agent_metrics(state, role, status)
+    frag = fragment if fragment is not None else task
     if len(frag) > 180:
         frag = frag[:177] + "..."
     state["agents"][role]["status"] = status
     state["agents"][role]["task"] = task
     state["agents"][role]["fragment"] = frag
     state["agents"][role]["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def _update_agent_metrics(state: dict[str, Any], role: str, new_status: str) -> None:
+    metrics = state.setdefault("agent_metrics", {})
+    entry = metrics.setdefault(
+        role,
+        {"active_s": 0.0, "last_status": "idle", "last_change_epoch": time.time()},
+    )
+    now = time.time()
+    last_status = entry.get("last_status", "idle")
+    last_change = float(entry.get("last_change_epoch", now))
+    if last_status == "running":
+        entry["active_s"] = float(entry.get("active_s", 0.0)) + max(0.0, now - last_change)
+    entry["last_status"] = new_status
+    entry["last_change_epoch"] = now
 
 
 def _nim_status_update(
@@ -297,7 +413,13 @@ def _nim_status_update(
     trace_to_stdout: bool = False,
 ) -> None:
     reasoning = _reasoning_summary(state=state, role=role, status=status, message=message)
-    _set_agent(state, role, status, reasoning)
+    task_map = {
+        "planner": "Planning next experiments",
+        "coder": "Drafting instrumentation suggestions",
+        "critic": "Reviewing risk and feasibility",
+        "summarizer": "Coordinating merged runbook",
+    }
+    _set_agent(state, role, status, task_map.get(role, role.title()), reasoning)
     if trace_to_stdout and role in {"planner", "critic", "summarizer"}:
         print(f"[{role}] {reasoning}")
     if state_path is not None:
