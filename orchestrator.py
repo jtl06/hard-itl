@@ -15,6 +15,8 @@ from agents.orchestrator_nim import NIMOrchestrator, parse_next_experiments
 from runner.flash import FlashError
 from runner import Runner, RunnerConfig
 
+COMMON_BAUD_OPTIONS = [9600, 19200, 38400, 57600, 74880, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000]
+
 
 def parse_config(path: str = "config.yaml") -> dict[str, Any]:
     data: dict[str, Any] = {}
@@ -76,7 +78,7 @@ def run_case(
     os.environ.setdefault("NIM_MODEL", str(nim_cfg.get("model", "nvidia/nemotron-nano-9b-v2")))
     selected_nim_mode = nim_mode or str(nim_cfg.get("execution_mode", "sequential"))
     os.environ["NIM_EXECUTION_MODE"] = selected_nim_mode
-    os.environ["NIM_COORDINATOR_REWORK_ROUNDS"] = str(int(nim_cfg.get("coordinator_rework_rounds", 1)))
+    os.environ["NIM_COORDINATOR_REWORK_ROUNDS"] = str(int(nim_cfg.get("coordinator_rework_rounds", 0)))
     os.environ["NIM_PEER_MESSAGE_ROUNDS"] = str(int(nim_cfg.get("peer_message_rounds", 1)))
 
     runner_cfg = RunnerConfig(
@@ -102,6 +104,8 @@ def run_case(
     nim_orchestrator = NIMOrchestrator() if nim_enabled else None
 
     case_cfg = cfg.get("cases", {}).get(case_id, {})
+    baud_options = _baud_options_from_case_cfg(case_cfg)
+    os.environ["NIM_BAUD_OPTIONS"] = ",".join(str(x) for x in baud_options)
     hidden_eval_context: dict[str, Any] = {}
     params = {
         "uart_rate": int(case_cfg.get("initial_uart_rate", 1000000)),
@@ -113,8 +117,8 @@ def run_case(
         params = {
             "guess_baud": int(case_cfg.get("initial_guess_baud", 57600)),
             "baud_probe_idx": 0,
-            "last_baud_direction": "unknown",
-            "last_baud_guess": int(case_cfg.get("initial_guess_baud", 57600)),
+            "baud_lo_idx": 0,
+            "baud_hi_idx": 11,
         }
         hidden_eval_context["target_baud"] = selected_target
     elif case_id == "framing_hunt":
@@ -146,6 +150,25 @@ def run_case(
     state = _init_state(case_id=case_id, runs=runs, mode=mode)
     if state_path is not None:
         _write_state(state_path, state)
+
+    # NIM-first bootstrapping: let the model choose the initial guess when possible.
+    gk = _guess_key(params)
+    if nim_orchestrator is not None and gk is not None:
+        bootstrap_prompt = (
+            "Bootstrap next experiment without prior run evidence. "
+            f"case={case_id} current_params={params}. "
+            "Return 3-5 dict-bullet experiments only."
+        )
+        try:
+            bootstrap_summary = asyncio.run(nim_orchestrator.run(bootstrap_prompt))
+            bootstrap_experiments = parse_next_experiments(bootstrap_summary)
+            match = [x for x in bootstrap_experiments if gk in x]
+            if match:
+                candidate = _normalize_case_params(case_id, dict(match[0]), params, baud_options)
+                if candidate:
+                    params = candidate
+        except Exception:
+            pass
 
     rows: list[dict[str, Any]] = []
     solved = False
@@ -380,11 +403,11 @@ def run_case(
             if guess_key:
                 match = [x for x in nim_next_experiments if guess_key in x]
                 if match:
-                    chosen = dict(match[0])
-                    target_key = _target_key_for_guess(guess_key)
-                    if target_key and target_key not in chosen and target_key in params:
-                        chosen[target_key] = params[target_key]
-                    params = chosen
+                    chosen = _normalize_case_params(case_id, dict(match[0]), params, baud_options)
+                    if chosen:
+                        params = chosen
+                    else:
+                        params = planner.next_request(params, analysis=analysis, triage=triage)
                 else:
                     params = planner.next_request(params, analysis=analysis, triage=triage)
             else:
@@ -677,6 +700,55 @@ def _target_value(params: dict[str, Any]) -> Any:
     if t not in params and g == "guess_baud":
         return "unknown"
     return params.get(t, "")
+
+
+def _baud_options_from_case_cfg(case_cfg: dict[str, Any]) -> list[int]:
+    raw = str(case_cfg.get("baud_options_csv", "")).strip()
+    if not raw:
+        return list(COMMON_BAUD_OPTIONS)
+    vals: list[int] = []
+    for chunk in raw.split(","):
+        part = chunk.strip()
+        if not part:
+            continue
+        try:
+            vals.append(int(part))
+        except ValueError:
+            continue
+    uniq = sorted({x for x in vals if x >= 1200})
+    return uniq if uniq else list(COMMON_BAUD_OPTIONS)
+
+
+def _normalize_case_params(
+    case_id: str,
+    candidate: dict[str, Any],
+    prior_params: dict[str, Any],
+    baud_options: list[int],
+) -> dict[str, Any]:
+    out = dict(prior_params)
+    out.update(candidate)
+    if case_id == "uart_demo":
+        if "guess_baud" not in out:
+            return {}
+        guess_raw = int(out["guess_baud"])
+        nearest = min(baud_options, key=lambda b: (abs(b - guess_raw), b))
+        out["guess_baud"] = int(nearest)
+        out.setdefault("baud_probe_idx", int(prior_params.get("baud_probe_idx", 0)) + 1)
+        out.setdefault("baud_lo_idx", int(prior_params.get("baud_lo_idx", 0)))
+        out.setdefault("baud_hi_idx", int(prior_params.get("baud_hi_idx", len(baud_options) - 1)))
+    elif case_id == "framing_hunt":
+        if "guess_frame" not in out:
+            return {}
+        out["guess_frame"] = str(out["guess_frame"])
+    elif case_id == "parity_hunt":
+        if "guess_parity" not in out:
+            return {}
+        out["guess_parity"] = str(out["guess_parity"])
+    elif case_id == "signature_check":
+        if "guess_magic" not in out:
+            return {}
+        out["guess_magic"] = int(out["guess_magic"])
+    return out
 
 
 def main() -> None:

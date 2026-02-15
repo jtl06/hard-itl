@@ -1,15 +1,16 @@
-# EdgeCase (RP2350 + USB CDC UART + local NIM)
+# EdgeCase (Multi-Agent LLM HIL on DGX Spark + NVIDIA NIM)
 
-Local-only multi-agent HIL pipeline. Only `runner/` touches hardware (`build`, `flash`, `/dev/tty*`).
+Local-first multi-agent hardware-in-the-loop debugger.  
+Only `runner/` touches hardware (`build`, `flash`, `/dev/tty*`).
 
 ## Mission and purpose
 
-This project demonstrates a practical multi-agent hardware-in-the-loop workflow for embedded debugging:
+EdgeCase demonstrates an LLM-driven hardware debugging loop designed for live demos and iterative bring-up:
 - use real UART evidence from the DUT as the single source of truth
-- run planner/coder/debugger/coordinator plus verifier roles against that evidence
+- run planner/coder/debugger/coordinator/validator roles against that evidence
 - converge quickly on a stable, passing configuration
 
-The goal is to make hardware debugging observable and repeatable, not just ad-hoc trial-and-error.
+The goal is to make hardware debugging observable, repeatable, and explainable, not just ad-hoc trial-and-error.
 
 ## Primary use cases
 
@@ -18,17 +19,16 @@ The goal is to make hardware debugging observable and repeatable, not just ad-ho
 - Regression checks: replay the same case across multiple runs and compare artifacts.
 - Safe automation: keep all hardware-touching actions isolated in `runner/`.
 
-## Hardware platform (DGX Spark)
+## Platform focus: DGX Spark + NIM
 
-Target host setup is DGX Spark on `Ubuntu 24.04 (ARM64)`:
+Primary deployment target is DGX Spark on `Ubuntu 24.04 (ARM64)`:
 - NIM inference runs locally via Docker (`make nim-start`).
 - Orchestrator, agents, dashboard, build, flash, and UART capture run on the same host.
-- RP2350 board is connected over USB CDC (`/dev/serial/by-id/*` preferred).
+- Hardware target (RP2350 in this repo) is connected over USB CDC (`/dev/serial/by-id/*` preferred).
 
 For real runs, set:
-- `PICO_SDK_PATH` for RP2350 firmware builds
-- Docker/NGC access for NIM (`NGC_API_KEY`) if using LLM orchestration
-- GNU Arm Embedded toolchain (`arm-none-eabi-gcc`) installed on host
+- Docker/NGC access for NIM (`NGC_API_KEY`) for local Nemotron inference
+- target-specific build toolchain (RP2350 example uses `PICO_SDK_PATH` + `arm-none-eabi-gcc`)
 
 ## Quick start
 
@@ -90,6 +90,9 @@ python3 orchestrator.py --case framing_hunt --runs 8 --target-frame 8E1
 python3 orchestrator.py --case parity_hunt --runs 8 --target-parity odd
 python3 orchestrator.py --case signature_check --runs 8 --target-magic 0xC0FFEE42
 ```
+
+For `uart_demo`, allowed model-selectable baud candidates are configurable via:
+- `cases.uart_demo.baud_options_csv`
 
 ## Analysis metrics
 
@@ -207,18 +210,29 @@ make -C firmware rp2350_signature_check
 - Without `PICO_SDK_PATH`: generates placeholder artifacts so software pipeline can still run.
 - For `signature_check`, runner passes `TARGET_MAGIC_HEX` from selected target magic in real mode.
 
-## NIM orchestration
+## Multi-agent NIM orchestration
 
 Environment defaults used by agents:
 - `NIM_CHAT_URL=http://localhost:8000/v1/chat/completions`
 - `NIM_MODEL=nvidia/nemotron-nano-9b-v2`
 - `NIM_EXECUTION_MODE=sequential` (`sequential` or `parallel`)
 
+Agent roles in this repo:
+- `planner`: chooses next experiment sequence
+- `coder`: proposes minimal instrumentation/fix changes
+- `critic` (UI label: Debugger): validates feasibility and risk
+- `verifier` (UI label: Validator): scores evidence quality and confidence
+- `summarizer` (UI label: Coordinator): merges final runbook output
+
 Config option:
 - `nim.execution_mode` in `config.yaml` / `config.real.example.yaml`
 - `nim.coordinator_rework_rounds` (sequential mode only; coordinator can send coder back for refinement)
 - `nim.peer_message_rounds` (agent-to-agent follow-up rounds before coordinator merge)
 - per-run override via CLI `--nim-mode` or dashboard `Agent Mode` selector
+
+NIM-first behavior:
+- when NIM is enabled, the initial guess experiment is model-selected before run 1
+- if model output is invalid/unavailable, planner fallback is used
 
 Peer message format (inside agent outputs):
 - `@coder: tighten instrumentation for missing RUN_END`

@@ -1,130 +1,104 @@
-# EdgeCase (RP2350 + USB CDC UART + DGX Spark NIM)
+# EdgeCase Brief (DGX Spark + NVIDIA NIM + Multi-Agent HIL)
 
 ## Goal
-Build a hackathon-ready, multi-agent hardware-in-the-loop (HIL) debugger where:
-- DUT is an RP2350 microcontroller connected over USB.
-- USB CDC UART is the only truth layer.
-- DGX Spark runs everything locally: orchestrator, agents, runner, and the NIM endpoint.
+Build a hackathon-ready, LLM-driven hardware-in-the-loop debugger where:
+- DGX Spark runs the full stack locally.
+- NVIDIA NIM (Nemotron) provides one shared OpenAI-compatible endpoint.
+- Multi-agent orchestration drives iterative debug decisions from UART evidence.
+- `runner/` is the only module allowed to touch hardware.
 
-Closed-loop flow:
-1) Build firmware with parameters
-2) Flash DUT
-3) Run test and capture UART stream
-4) Agents analyze evidence bundle and hypothesize root cause
-5) Planner proposes next experiments
-6) Repeat until pass
+This is a **multi-agent systems demo first**, with RP2350 as the current reference target.
 
-## Environment / Constraints
-- Host: DGX Spark (Ubuntu 24.04)
-- Local LLM endpoint (OpenAI-compatible):
+## Core Story
+Closed-loop debug cycle:
+1) Build firmware and flash target
+2) Capture UART truth stream
+3) Analyze run artifacts
+4) Planner/Coder/Debugger/Validator reason over evidence
+5) Coordinator emits next experiments and operator guidance
+6) Repeat until pass, then stop with a success message
+
+## Environment / Platform
+- Host: DGX Spark (`Ubuntu 24.04`, `ARM64`)
+- Local endpoint:
   - `NIM_CHAT_URL=http://localhost:8000/v1/chat/completions`
   - `NIM_MODEL=nvidia/nemotron-nano-9b-v2`
-- No cloud calls.
-- Runner is the ONLY component allowed to:
-  - run `make`
-  - flash hardware
-  - access `/dev/tty*`
-- Everything runnable via:
-  - `python3 orchestrator.py --case uart_demo --runs 8`
-  - `make demo`
+- No required cloud inference path.
+- Dashboard + orchestrator + agents + runner all execute on same host.
 
-## UART Truth Layer Requirements
-- UART logs are captured from USB CDC serial:
-  - prefer `/dev/serial/by-id/*`
-  - fallback `/dev/ttyACM*` (and `/dev/ttyUSB*` when needed)
-- UART lines must include:
-  - `RUN_START <run_id>`
-  - `ERROR <code> <msg>`
-  - `RUN_END <run_id>`
+## Architecture Constraints
+- `runner/` is the only hardware-touching boundary:
+  - build commands
+  - flash commands
+  - `/dev/tty*` access
+- USB CDC UART is the only truth layer.
+- No logic analyzer dependency in current flow.
 
 ## Runner Contract
 Runner must:
-- auto-detect serial port
-- timestamp every captured UART line
-- capture until `RUN_END <run_id>` or timeout
-- handle serial re-enumeration after flashing
-- expose `flash(image_path, method="auto")` returning success/failure + diagnostics
+- auto-detect serial port (`/dev/serial/by-id/*` preferred)
+- handle re-enumeration after flash
+- timestamp captured UART lines
+- stop capture on `RUN_END` or timeout
+- emit actionable diagnostics on failure
 
-## Flashing Requirements (auto-detect)
-Priority:
-1) UF2 mass-storage copy (RPI-RP2 / Pico2 style mounted volume)
+Flash strategy (auto-detect, fast failure):
+1) UF2 mass-storage copy
 2) `picotool`
 3) optional OpenOCD
 
-Must fail fast with actionable diagnostics if no method works.
-
-## Evidence Bundle (per run)
-Store all outputs under:
-- `runs/run_<timestamp>_<shortid>/`
-
-Required files:
+## Artifact Contract (per run)
+Each run directory under `runs/run_<timestamp>_<id>/` must include:
 - `manifest.json`
-  - run_id, case_id, params, git_sha, timestamps, flash_method, serial_port
-- `firmware/`
-  - built ELF + UF2 (if produced)
+- `firmware/firmware.elf`
+- `firmware/firmware.uf2`
 - `uart.log`
-  - timestamped serial capture
 - `analysis.json`
-  - `pass_fail`
-  - UART metrics
-  - parsed error events
 - `triage.md`
-  - hypotheses + evidence references
-  - next experiments
-  - suggested fix (optional)
 
-## Analysis Metrics
-Focus on UART-only metrics:
-- `error_count`
-- `missing_start`
-- `missing_end`
-- `lines_per_sec`
-- `max_gap_ms`
-- `last_error_code`
+No extra bundle files.
 
-## Repo Structure
-- `runner/`
-  - `runner.py`
-  - `flash.py`
-  - `serial_capture.py`
-- `agents/`
-  - `llm_client.py`
-  - `planner.py`
-  - `analyst.py`
-  - `triage.py`
-  - `orchestrator_nim.py`
-- `schemas/types.py`
-- `orchestrator.py`
-- `config.yaml`
-- `README.md`
-- `Makefile`
+## Agent Model
+Five roles over one NIM endpoint:
+1) Planner
+2) Coder
+3) Critic (UI: Debugger)
+4) Verifier (UI: Validator)
+5) Summarizer (UI: Coordinator)
 
-## Agent Behavior
-Implement exactly 4 LLM roles against one NIM endpoint:
-1) planner
-2) coder
-3) critic
-4) summarizer
+Behavior requirements:
+- No hidden chain-of-thought exposure.
+- Stream short reasoning summaries only:
+  - `Evidence -> Hypothesis -> Next action`
+- Stream live UART lines to CLI/dashboard.
+- Prefer dependency-driven scheduling over cosmetic parallelism.
 
-Requirements:
-- planner/coder/critic run concurrently (`asyncio`)
-- summarizer merges outputs to one final answer
-- no container lifecycle actions in code
-- suggestions must respect runner-only hardware access
+## Dashboard Requirements
+- Live SSE stream (`GET /api/stream`)
+- Start runs via `POST /api/run`
+- Show:
+  - Planner, Coder, Debugger, Coordinator, Validator panes
+  - overall output
+  - latest UART
+  - run tracker
+  - agent load/time chart
 
-Provide:
-- `agents/orchestrator_nim.py` using `aiohttp` + `asyncio`
-- `tools/smoke_concurrency.sh` using 3 concurrent `curl` requests
+## Demo/Real Modes
+- `demo` (mock): full pipeline without hardware
+- `real`: build/flash/capture against connected hardware
 
-## Minimal Demo Scenario
-- Include deterministic synthetic flake driven by parameters.
-- Planner/agents should find a stable passing config within ~6-8 runs.
-- Mock mode must run end-to-end without hardware.
+Commands that must work:
+- `make demo`
+- `python3 orchestrator.py --case uart_demo --runs 8`
 
-## Deliverables
-- `make demo` prints a short summary table
-- README documents:
-  - dependency install
-  - flash backend setup
-  - serial auto-detect behavior
-  - demo command usage
+## Current Demo Cases
+- `uart_demo` (baud hunt, blind-first strategy)
+- `framing_hunt`
+- `parity_hunt`
+- `signature_check`
+
+## Success Criteria
+- Pipeline runs end-to-end in demo mode with clear agent activity.
+- Real mode gives actionable diagnostics when toolchain/flash/UART fail.
+- Agents converge on passing configuration within reasonable run count.
+- README reflects actual behavior and DGX Spark + NIM deployment.

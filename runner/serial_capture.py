@@ -322,7 +322,7 @@ def _simulate_mock_baud_hunt(
         lines.extend(
             [
                 f"{_iso(t0 + timedelta(milliseconds=20))} ERROR BAUD_MISMATCH guessed={guess}",
-                f"{_iso(t0 + timedelta(milliseconds=24))} INFO BAUD_HINT {hint}",
+                f"{_iso(t0 + timedelta(milliseconds=24))} INFO BAUD_GUIDE {hint}",
                 f"{_iso(t0 + timedelta(milliseconds=30))} INFO test_result FAIL",
                 f"{_iso(t0 + timedelta(milliseconds=40))} RUN_END {run_id}",
             ]

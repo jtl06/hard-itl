@@ -20,13 +20,14 @@ nim:
   chat_url: http://localhost:8000/v1/chat/completions
   model: nvidia/nemotron-nano-9b-v2
   execution_mode: sequential
-  coordinator_rework_rounds: 1
+  coordinator_rework_rounds: 0
   peer_message_rounds: 1
 
 cases:
   uart_demo:
     initial_guess_baud: 57600
     target_baud: 115200
+    baud_options_csv: "9600,19200,38400,57600,74880,115200,230400,460800,921600,1000000,1500000,2000000"
   framing_hunt:
     initial_guess_frame: 7E1
     target_frame: 8N1

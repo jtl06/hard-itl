@@ -5,11 +5,16 @@ from schemas.types import AnalysisResult, TriageResult
 
 class PlannerAgent:
     # Try common UART baud rates first for clearer demo behavior.
-    _COMMON_BAUDS = [9600, 19200, 38400, 57600, 74880, 115200, 230400, 460800, 921600, 1000000]
+    _COMMON_BAUDS = [9600, 19200, 38400, 57600, 74880, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000]
 
     def initial_request(self) -> dict[str, int]:
         # Default initial search point for baud-hunt demos.
-        return {"guess_baud": 115200, "baud_probe_idx": 0}
+        return {
+            "guess_baud": 115200,
+            "baud_probe_idx": 0,
+            "baud_lo_idx": 0,
+            "baud_hi_idx": len(self._COMMON_BAUDS) - 1,
+        }
 
     def next_request(
         self,
@@ -25,32 +30,37 @@ class PlannerAgent:
             direction = str(analysis.metrics.get("baud_direction", "unknown")).lower()
             guess = int(previous_params.get("guess_baud", 115200))
             idx = int(previous_params.get("baud_probe_idx", 0))
-            common = self._ordered_common_bauds(guess)
-            last_direction = str(previous_params.get("last_baud_direction", "unknown")).lower()
-            last_guess = int(previous_params.get("last_baud_guess", guess))
+            ordered = sorted(self._COMMON_BAUDS)
+            lo_idx = int(previous_params.get("baud_lo_idx", 0))
+            hi_idx = int(previous_params.get("baud_hi_idx", len(ordered) - 1))
+            lo_idx = max(0, min(lo_idx, len(ordered) - 1))
+            hi_idx = max(0, min(hi_idx, len(ordered) - 1))
+            guess_idx = self._nearest_index(ordered, guess)
 
-            if direction in {"higher", "lower"}:
-                # If direction flips, we have a bracket; refine via midpoint (can be non-standard).
-                if last_direction in {"higher", "lower"} and last_direction != direction and last_guess != guess:
-                    lo = min(last_guess, guess)
-                    hi = max(last_guess, guess)
-                    next_guess = max(1200, (lo + hi) // 2)
-                else:
-                    next_guess = self._directional_step(common, guess=guess, direction=direction)
+            if direction == "higher":
+                lo_idx = max(lo_idx, guess_idx + 1)
+            elif direction == "lower":
+                hi_idx = min(hi_idx, guess_idx - 1)
+
+            if direction in {"higher", "lower"} and lo_idx <= hi_idx:
+                # Bracketed binary-search over common baud values.
+                next_idx = (lo_idx + hi_idx) // 2
+                next_guess = ordered[next_idx]
+                if next_guess == guess and lo_idx < hi_idx:
+                    next_idx = min(hi_idx, next_idx + 1)
+                    next_guess = ordered[next_idx]
             else:
-                # No hint yet: explore common rates around current guess.
-                if idx < len(common):
-                    prev_guess = int(previous_params.get("guess_baud", 0))
-                    while idx < len(common) - 1 and common[idx] == prev_guess:
-                        idx += 1
-                    next_guess = common[idx]
-                else:
-                    next_guess = common[min(len(common) - 1, idx % len(common))]
+                # No direction signal yet: probe spread of common rates.
+                probe_order = self._probe_order()
+                next_guess = probe_order[min(idx, len(probe_order) - 1)]
+                while next_guess == guess and idx < len(probe_order) - 1:
+                    idx += 1
+                    next_guess = probe_order[idx]
             return {
                 "guess_baud": next_guess,
                 "baud_probe_idx": idx + 1,
-                "last_baud_direction": direction,
-                "last_baud_guess": guess,
+                "baud_lo_idx": lo_idx,
+                "baud_hi_idx": hi_idx,
             }
         if "guess_frame" in previous_params:
             if triage.next_experiments:
@@ -88,23 +98,20 @@ class PlannerAgent:
         buffer_size = min(256, max(64, int(previous_params.get("buffer_size", 16)) * 2))
         return {"uart_rate": uart_rate, "buffer_size": buffer_size}
 
-    def _ordered_common_bauds(self, target: int) -> list[int]:
-        return sorted(self._COMMON_BAUDS, key=lambda b: (abs(b - target), b))
+    def _probe_order(self) -> list[int]:
+        # Center-out probe order on common baud rates for blind startup.
+        ordered = sorted(self._COMMON_BAUDS)
+        center = ordered.index(115200) if 115200 in ordered else len(ordered) // 2
+        out: list[int] = [ordered[center]]
+        for delta in range(1, len(ordered)):
+            left = center - delta
+            right = center + delta
+            if left >= 0:
+                out.append(ordered[left])
+            if right < len(ordered):
+                out.append(ordered[right])
+        return out
 
-    def _directional_step(self, common: list[int], guess: int, direction: str) -> int:
-        ordered = sorted(common)
-        # Snap to nearest common bucket, with direction-aware tie-break.
-        min_abs = min(abs(v - guess) for v in ordered)
-        nearest_candidates = [v for v in ordered if abs(v - guess) == min_abs]
-        if direction == "lower":
-            nearest = max(nearest_candidates)
-        else:
-            nearest = min(nearest_candidates)
-        nearest_idx = ordered.index(nearest)
-        if direction == "higher":
-            if guess < nearest:
-                return nearest
-            return ordered[min(len(ordered) - 1, nearest_idx + 1)]
-        if guess > nearest:
-            return nearest
-        return ordered[max(0, nearest_idx - 1)]
+    @staticmethod
+    def _nearest_index(ordered: list[int], value: int) -> int:
+        return min(range(len(ordered)), key=lambda i: (abs(ordered[i] - value), ordered[i]))

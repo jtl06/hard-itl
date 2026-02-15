@@ -45,7 +45,7 @@ class AnalystAgent:
                 code = msg.split(" ", 1)[0] if msg else "UNKNOWN"
                 last_error_code = code
                 key_events.append({"index": idx, "timestamp": parts[0], "code": code, "message": msg})
-            if event == "INFO" and msg.startswith("BAUD_HINT "):
+            if event == "INFO" and (msg.startswith("BAUD_GUIDE ") or msg.startswith("BAUD_HINT ")):
                 hint = msg.split(" ", 1)[1].strip().lower()
                 if hint in {"higher", "lower", "unknown"}:
                     baud_direction = hint

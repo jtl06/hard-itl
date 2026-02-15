@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ast
 import json
 import os
 import re
@@ -30,15 +31,15 @@ class NIMOrchestrator:
         self.execution_mode = os.getenv("NIM_EXECUTION_MODE", "sequential").strip().lower() or "sequential"
         if self.execution_mode not in {"sequential", "parallel"}:
             self.execution_mode = "sequential"
-        self.coordinator_rework_rounds = max(0, int(os.getenv("NIM_COORDINATOR_REWORK_ROUNDS", "1")))
+        self.coordinator_rework_rounds = max(0, int(os.getenv("NIM_COORDINATOR_REWORK_ROUNDS", "0")))
         self.peer_message_rounds = max(0, int(os.getenv("NIM_PEER_MESSAGE_ROUNDS", "1")))
         self.timeout_s = float(os.getenv("NIM_TIMEOUT_S", "3.0"))
         self.min_visible_running_s = float(os.getenv("NIM_MIN_RUNNING_S", "0.5"))
         self.role_min_visible_s = {
-            "planner": float(os.getenv("NIM_MIN_RUNNING_PLANNER_S", "0.45")),
-            "coder": float(os.getenv("NIM_MIN_RUNNING_CODER_S", "0.65")),
-            "critic": float(os.getenv("NIM_MIN_RUNNING_CRITIC_S", "0.8")),
-            "verifier": float(os.getenv("NIM_MIN_RUNNING_VERIFIER_S", "0.6")),
+            "planner": float(os.getenv("NIM_MIN_RUNNING_PLANNER_S", "0.5")),
+            "coder": float(os.getenv("NIM_MIN_RUNNING_CODER_S", "0.45")),
+            "critic": float(os.getenv("NIM_MIN_RUNNING_CRITIC_S", "0.7")),
+            "verifier": float(os.getenv("NIM_MIN_RUNNING_VERIFIER_S", "0.7")),
             "summarizer": float(os.getenv("NIM_MIN_RUNNING_SUMMARIZER_S", "0.55")),
         }
         self.last_fanout: list[AgentOutput] = []
@@ -72,8 +73,13 @@ class NIMOrchestrator:
             return self._fallback_summary("aiohttp missing", user_prompt)
 
         planner_prompt = (
+            f"Allowed UART baud options: {os.getenv('NIM_BAUD_OPTIONS', '9600,19200,38400,57600,74880,115200,230400,460800,921600,1000000,1500000,2000000')}. "
             "You are planner agent. Propose next 3-5 UART HIL experiments. "
-            "Respect: only runner can touch hardware. Cite uart.log and analysis.json evidence."
+            "Respect: only runner can touch hardware. Cite uart.log and analysis.json evidence. "
+            "If case=uart_demo, propose guess_baud values only from allowed options. "
+            "If case=framing_hunt use guess_frame. If case=parity_hunt use guess_parity. "
+            "If case=signature_check use guess_magic. "
+            "Emit proposals as one-line dict bullets, e.g. - {'guess_baud': 230400}"
         )
         coder_prompt = (
             "You are coder agent. Propose minimal instrumentation and robustness patch ideas only. "
@@ -320,18 +326,46 @@ class NIMOrchestrator:
         )
 
 
-def parse_next_experiments(summary_text: str) -> list[dict[str, int]]:
-    experiments: list[dict[str, int]] = []
+def parse_next_experiments(summary_text: str) -> list[dict[str, int | str]]:
+    experiments: list[dict[str, int | str]] = []
     for line in summary_text.splitlines():
         stripped = line.strip()
         if not stripped.startswith("-"):
             continue
         body = stripped.lstrip("- ").strip()
-        if "uart_rate" not in body or "buffer_size" not in body:
+        if "{" not in body or "}" not in body:
             continue
+        start = body.find("{")
+        end = body.rfind("}")
+        if start < 0 or end <= start:
+            continue
+        body_dict = body[start : end + 1]
         try:
-            item = json.loads(body.replace("'", '"'))
-            experiments.append({"uart_rate": int(item["uart_rate"]), "buffer_size": int(item["buffer_size"])})
+            item = ast.literal_eval(body_dict)
+            if not isinstance(item, dict):
+                continue
+            out: dict[str, int | str] = {}
+            for key in (
+                "guess_baud",
+                "guess_frame",
+                "guess_parity",
+                "guess_magic",
+                "target_baud",
+                "target_frame",
+                "target_parity",
+                "target_magic",
+                "uart_rate",
+                "buffer_size",
+            ):
+                if key not in item:
+                    continue
+                val = item[key]
+                if key in {"guess_frame", "guess_parity", "target_frame", "target_parity"}:
+                    out[key] = str(val)
+                else:
+                    out[key] = int(val)
+            if out:
+                experiments.append(out)
         except Exception:
             continue
     return experiments
