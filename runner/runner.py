@@ -180,6 +180,11 @@ class Runner:
             src_uf2 = Path(self.config.real_uf2_path)
             if not src_uf2.exists():
                 raise FlashError(f"UF2 artifact not found: {src_uf2}")
+            if self._is_placeholder_artifact(src_uf2):
+                raise FlashError(
+                    f"UF2 artifact looks like a placeholder: {src_uf2}. "
+                    "Refusing to flash in real mode. Set PICO_SDK_PATH and rebuild firmware."
+                )
 
             uf2.write_bytes(src_uf2.read_bytes())
 
@@ -200,6 +205,14 @@ class Runner:
         elf.write_text(f"ELF_PLACEHOLDER\n{meta}\n", encoding="utf-8")
         uf2.write_text(f"UF2_PLACEHOLDER\n{meta}\n", encoding="utf-8")
         return elf, uf2
+
+    @staticmethod
+    def _is_placeholder_artifact(path: Path) -> bool:
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return False
+        return b"PLACEHOLDER" in data[:4096]
 
     @staticmethod
     def _new_run_id() -> str:

@@ -38,3 +38,9 @@ For signature check target magic override:
 ```bash
 make -C firmware rp2350_signature_check TARGET_MAGIC_HEX=0xC0FFEE42
 ```
+
+For real hardware runs, enforce a real SDK build (no placeholders):
+
+```bash
+make -C firmware REQUIRE_PICO_SDK=1 rp2350_uart_demo
+```

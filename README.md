@@ -126,10 +126,11 @@ Real mode requires valid firmware build outputs configured in `config.yaml`:
 - optional `runner.real_elf_path`
 
 Default config uses:
-- `build_cmd: make -C firmware rp2350_{case_id}`
+- `build_cmd: make -C firmware REQUIRE_PICO_SDK=1 rp2350_{case_id}`
 - `real_uf2_path: firmware/build/firmware.uf2`
 
 If `runner.real_uf2_path` is missing, orchestrator exits with configuration error.
+If the UF2 appears to be a placeholder artifact, real mode aborts before flashing.
 
 Run real mode:
 

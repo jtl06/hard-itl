@@ -4,6 +4,7 @@ UF2 := $(BUILD_DIR)/firmware.uf2
 RP_BUILD := $(BUILD_DIR)/rp2350
 
 TARGET_MAGIC_HEX ?= 0xC0FFEE42
+REQUIRE_PICO_SDK ?= 0
 
 DEMO_TARGETS := rp2350_uart_demo rp2350_framing_hunt rp2350_parity_hunt rp2350_signature_check
 
@@ -33,11 +34,17 @@ $(UF2): | $(BUILD_DIR)
 
 $(RP_BUILD)/%.uf2: CMakeLists.txt rp2350_uart_demo.c rp2350_framing_hunt.c rp2350_parity_hunt.c rp2350_signature_check.c | $(RP_BUILD)
 	@if [ -z "$$PICO_SDK_PATH" ]; then \
-		echo "PICO_SDK_PATH not set; generating RP2350 placeholder artifacts for $*"; \
-		printf "%s_ELF_PLACEHOLDER\n" "$*" > "$(RP_BUILD)/$*.elf"; \
-		printf "generated_utc=%s\n" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$(RP_BUILD)/$*.elf"; \
-		printf "%s_UF2_PLACEHOLDER\n" "$*" > "$(RP_BUILD)/$*.uf2"; \
-		printf "generated_utc=%s\n" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$(RP_BUILD)/$*.uf2"; \
+		if [ "$(REQUIRE_PICO_SDK)" = "1" ]; then \
+			echo "ERROR: PICO_SDK_PATH is not set; refusing placeholder build for real mode."; \
+			echo "Set PICO_SDK_PATH and rerun (example: export PICO_SDK_PATH=~/pico-sdk)"; \
+			exit 2; \
+		else \
+			echo "PICO_SDK_PATH not set; generating RP2350 placeholder artifacts for $*"; \
+			printf "%s_ELF_PLACEHOLDER\n" "$*" > "$(RP_BUILD)/$*.elf"; \
+			printf "generated_utc=%s\n" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$(RP_BUILD)/$*.elf"; \
+			printf "%s_UF2_PLACEHOLDER\n" "$*" > "$(RP_BUILD)/$*.uf2"; \
+			printf "generated_utc=%s\n" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$(RP_BUILD)/$*.uf2"; \
+		fi; \
 	else \
 		cmake -S . -B "$(RP_BUILD)" -DPICO_BOARD=pico2 -DTARGET_MAGIC_HEX="$(TARGET_MAGIC_HEX)"; \
 		cmake --build "$(RP_BUILD)" -j --target "$*"; \

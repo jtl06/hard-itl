@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -483,6 +484,25 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json({"ok": False, "message": "Run already in progress."}, code=409)
                     return
 
+                run_env = dict(os.environ)
+                if mode == "real":
+                    if not run_env.get("PICO_SDK_PATH"):
+                        default_sdk = Path.home() / "pico-sdk"
+                        if default_sdk.exists():
+                            run_env["PICO_SDK_PATH"] = str(default_sdk)
+                    if not run_env.get("PICO_SDK_PATH"):
+                        self._send_json(
+                            {
+                                "ok": False,
+                                "message": (
+                                    "Real mode requires PICO_SDK_PATH for real firmware builds. "
+                                    "Export PICO_SDK_PATH (or install at ~/pico-sdk) and restart make gui."
+                                ),
+                            },
+                            code=400,
+                        )
+                        return
+
                 init_state = {
                     "overall": {
                         "status": "running",
@@ -533,6 +553,7 @@ class Handler(BaseHTTPRequestHandler):
                 PROCESS = subprocess.Popen(
                     cmd,
                     cwd=str(ROOT),
+                    env=run_env,
                     stdout=logf,
                     stderr=logf,
                     text=True,

@@ -5,7 +5,7 @@ runner:
   serial_timeout_s: 8
   reenumeration_timeout_s: 10
   prefer_by_id: true
-  build_cmd: "make -C firmware rp2350_{case_id}" # case-aware target; case_id -> uart_demo/framing_hunt/parity_hunt/signature_check
+  build_cmd: "make -C firmware REQUIRE_PICO_SDK=1 rp2350_{case_id}" # case-aware target; refuses placeholder artifacts in real mode
   build_cwd: "."
   real_elf_path: "firmware/build/firmware.elf"
   real_uf2_path: "firmware/build/firmware.uf2"
