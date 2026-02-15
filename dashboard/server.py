@@ -211,7 +211,7 @@ HTML = """<!doctype html>
 
     <section class=\"card\">
       <h3>Agent Load / Time</h3>
-      <div class=\"meta\">Cumulative active-time split (updates every 2s).</div>
+      <div class=\"meta\">Cumulative active-time split (updates every 1s).</div>
       <div class=\"chart-grid\">
         <div class=\"chart-row\"><div>Planner</div><div class=\"bar-wrap\"><div id=\"bar_planner\" class=\"bar-fill\"></div></div><div id=\"pct_planner\">0.0%</div></div>
         <div class=\"chart-row\"><div>Coder</div><div class=\"bar-wrap\"><div id=\"bar_coder\" class=\"bar-fill\"></div></div><div id=\"pct_coder\">0.0%</div></div>
@@ -356,7 +356,7 @@ function initSSE() {
 document.getElementById('start_btn').addEventListener('click', startRun);
 refreshOnce();
 initSSE();
-setInterval(refreshOnce, 2000);
+setInterval(refreshOnce, 1000);
 </script>
 </body>
 </html>

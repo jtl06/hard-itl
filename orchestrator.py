@@ -117,23 +117,23 @@ def run_case(
         _set_agent(
             state,
             "coder",
-            "running",
-            "Preparing instrumentation strategy",
-            _reasoning_summary(state, "coder", "running", "preparing instrumentation"),
+            "idle",
+            "Waiting for UART evidence",
+            _reasoning_summary(state, "coder", "idle", "waiting for evidence"),
         )
         _set_agent(
             state,
             "critic",
-            "running",
-            "Preparing feasibility checks",
-            _reasoning_summary(state, "critic", "running", "preparing checks"),
+            "idle",
+            "Waiting for UART evidence",
+            _reasoning_summary(state, "critic", "idle", "waiting for evidence"),
         )
         _set_agent(
             state,
             "summarizer",
-            "running",
-            "Waiting to merge agent outputs",
-            _reasoning_summary(state, "summarizer", "running", "awaiting fan-in"),
+            "idle",
+            "Waiting for fan-in",
+            _reasoning_summary(state, "summarizer", "idle", "awaiting fan-in"),
         )
         if state_path is not None:
             _write_state(state_path, state)

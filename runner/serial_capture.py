@@ -4,7 +4,6 @@ import glob
 import os
 import select
 import subprocess
-import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -182,28 +181,13 @@ def _read_until_end_marker(
 
 
 def _configure_serial_port(port: str, baud: int) -> subprocess.CompletedProcess[str]:
-    """Configure serial settings across Linux/macOS.
-
-    Linux expects `stty -F`, while macOS/BSD expects `stty -f`.
-    """
-    if sys.platform.startswith("linux"):
-        flag_order = ["-F", "-f"]
-    else:
-        flag_order = ["-f", "-F"]
-
-    last: subprocess.CompletedProcess[str] | None = None
-    for flag in flag_order:
-        proc = subprocess.run(
-            ["stty", flag, port, str(baud), "raw", "-echo", "-icanon", "min", "0", "time", "1"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        last = proc
-        if proc.returncode == 0:
-            return proc
-    assert last is not None
-    return last
+    """Configure serial settings for Linux hosts."""
+    return subprocess.run(
+        ["stty", "-F", port, str(baud), "raw", "-echo", "-icanon", "min", "0", "time", "1"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _simulate_mock_uart(

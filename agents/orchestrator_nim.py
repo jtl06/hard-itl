@@ -27,7 +27,13 @@ class NIMOrchestrator:
         self.chat_url = os.getenv("NIM_CHAT_URL", "http://localhost:8000/v1/chat/completions")
         self.model = os.getenv("NIM_MODEL", "nvidia/nemotron-nano-9b-v2")
         self.timeout_s = float(os.getenv("NIM_TIMEOUT_S", "3.0"))
-        self.min_visible_running_s = float(os.getenv("NIM_MIN_RUNNING_S", "0.6"))
+        self.min_visible_running_s = float(os.getenv("NIM_MIN_RUNNING_S", "0.5"))
+        self.role_min_visible_s = {
+            "planner": float(os.getenv("NIM_MIN_RUNNING_PLANNER_S", "0.45")),
+            "coder": float(os.getenv("NIM_MIN_RUNNING_CODER_S", "0.65")),
+            "critic": float(os.getenv("NIM_MIN_RUNNING_CRITIC_S", "0.8")),
+            "summarizer": float(os.getenv("NIM_MIN_RUNNING_SUMMARIZER_S", "0.55")),
+        }
         self.last_fanout: list[AgentOutput] = []
 
     async def run(
@@ -43,13 +49,15 @@ class NIMOrchestrator:
             ]
             if status_callback is not None:
                 status_callback("planner", "running", "Planning next experiments from UART evidence.")
+                await asyncio.sleep(0.25)
                 status_callback("coder", "running", "Drafting minimal instrumentation improvements.")
+                await asyncio.sleep(0.2)
                 status_callback("critic", "running", "Reviewing feasibility and runner-only constraints.")
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.55)
                 for item in self.last_fanout:
                     status_callback(item.role, "fallback", item.text)
                 status_callback("summarizer", "running", "Merging planner/coder/debugger updates.")
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.4)
                 status_callback("summarizer", "fallback", "Using deterministic fallback summary.")
             return self._fallback_summary("aiohttp missing", user_prompt)
 
@@ -120,8 +128,9 @@ class NIMOrchestrator:
         if not text:
             text = f"{role} produced empty output"
         elapsed = time.perf_counter() - t0
-        if elapsed < self.min_visible_running_s:
-            await asyncio.sleep(self.min_visible_running_s - elapsed)
+        role_min = self.role_min_visible_s.get(role, self.min_visible_running_s)
+        if elapsed < role_min:
+            await asyncio.sleep(role_min - elapsed)
         if status_callback is not None:
             status_callback(role, "done", text)
         return AgentOutput(role=role, text=text)
