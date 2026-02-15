@@ -1,11 +1,14 @@
-# Firmware Placeholder
+# Firmware Scaffold
 
-This baseline does not ship a full RP2350 SDK project.
+This folder now includes a minimal `Makefile` so the configured build command works:
 
-The runner currently generates placeholder `firmware.elf` and `firmware.uf2`
-artifacts per run in `runs/<run_id>/firmware/` so the pipeline can execute
-end-to-end in mock mode.
+```bash
+make -C firmware all
+```
 
-Intended integration point:
-- Replace `Runner._build_firmware_artifacts(...)` in `runner/runner.py` with
-  real build commands and produced binaries.
+Outputs:
+- `firmware/build/firmware.elf`
+- `firmware/build/firmware.uf2`
+
+These are placeholder artifacts for pipeline validation. Replace this scaffold with
+real RP2350 firmware build logic when your SDK/project is available.
