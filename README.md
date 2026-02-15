@@ -12,6 +12,52 @@ EdgeCase demonstrates an LLM-driven hardware debugging loop designed for live de
 
 The goal is to make hardware debugging observable, repeatable, and explainable, not just ad-hoc trial-and-error.
 
+## Architecture block diagram
+
+```text
+                         ┌───────────────────────────────────────────┐
+                         │            NVIDIA NIM (local)              │
+                         │  http://localhost:8000/v1/chat/completions │
+                         └───────────────▲───────────────────────────┘
+                                         │ LLM calls
+                                         │
+┌──────────────────────────────┐   ┌─────┴─────────────────────────────┐
+│ Dashboard (make gui)          │   │ orchestrator.py (CLI)             │
+│ http://127.0.0.1:8765         │   │ - run loop per case               │
+│ - Planner/Coder/Debugger/...  │◄──┤ - emits SSE updates               │
+│ - Verifier panel + charts     │SSE│ - reads/writes run artifacts      │
+└───────────────▲──────────────┘   └─────┬─────────────────────────────┘
+                │ user selects case/target│
+                │                         │ invokes
+                │                         ▼
+                │               ┌─────────────────────────┐
+                │               │ Agents (fan-out/converge)│
+                │               │ Planner / Coder / Debugger│
+                │               │ Coordinator / Verifier    │
+                │               └───────────┬──────────────┘
+                │                           │ propose params
+                │                           ▼
+                │               ┌─────────────────────────┐
+                │               │ runner/ (ONLY hardware)  │
+                │               │ - Build (ELF/UF2)         │
+                │               │ - Flash (picotool/OpenOCD │
+                │               │   /UF2)                   │
+                │               │ - UART capture (/dev/tty*)│
+                │               │ - Mock mode (synthetic)   │
+                │               └───────────┬──────────────┘
+                │                           │ produces
+                ▼                           ▼
+        ┌────────────────────────────────────────────────────┐
+        │ Run Evidence Bundle (unchanged contract)            │
+        │ runs/run_x/                                         │
+        │  manifest.json  firmware.elf  firmware.uf2          │
+        │  uart.log  analysis.json  triage.md                 │
+        └────────────────────────────────────────────────────┘
+```
+
+Real mode path: Runner -> Flash -> RP2350 -> UART -> uart.log  
+Mock/demo path: Runner -> synthetic uart.log + outcomes
+
 ## Primary use cases
 
 - Interactive demos: show live agent reasoning summaries and UART logs in one dashboard.
