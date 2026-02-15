@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -16,6 +17,7 @@ STATE_PATH = ROOT / "dashboard" / "state.json"
 LOG_PATH = ROOT / "dashboard" / "orchestrator.log"
 
 PROCESS: subprocess.Popen[str] | None = None
+PROCESS_PAUSED = False
 LOCK = threading.Lock()
 GPU_CACHE: dict[str, object] = {
     "ts": 0.0,
@@ -72,6 +74,14 @@ HTML = """<!doctype html>
       gap: 10px;
     }
     .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .row .spacer-right { margin-left: auto; }
+    .brand-tag {
+      margin-left: auto;
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
     .pill { border-radius: 999px; padding: 4px 10px; font-size: 12px; border: 1px solid var(--border); color: var(--muted); }
     .progress-wrap { width: 100%; height: 10px; border-radius: 999px; background: #0a1528; border: 1px solid var(--border); overflow: hidden; }
     .progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #2d75ff, #33d17a); transition: width 250ms ease; }
@@ -131,7 +141,7 @@ HTML = """<!doctype html>
       color: #d8e5ff;
       font-size: 12px;
       line-height: 1.4;
-      max-height: 210px;
+      max-height: none;
       overflow: auto;
       padding: 8px;
       border-radius: 8px;
@@ -151,11 +161,18 @@ HTML = """<!doctype html>
     .area-system { grid-area: system; }
     .area-load { min-height: 180px; }
     .area-uart, .area-tracker, .area-system { min-height: 140px; }
-    .area-overall, .area-tracker { display: flex; flex-direction: column; }
+    .area-overall, .area-tracker, .area-planner, .area-coder, .area-debugger, .area-coordinator, .area-validator {
+      display: flex;
+      flex-direction: column;
+    }
     #overall_output, #history {
       flex: 1;
       height: 100%;
       max-height: none;
+    }
+    #planner_fragment, #coder_fragment, #critic_fragment, #summarizer_fragment, #verifier_fragment {
+      flex: 1;
+      min-height: 0;
     }
     .chart-grid {
       display: grid;
@@ -166,15 +183,19 @@ HTML = """<!doctype html>
       height: 10px;
       border-radius: 999px;
       border: 1px solid #21355a;
-      background: #0a1528;
+      background: linear-gradient(90deg, #ff6bb0 0%, #f6c453 55%, #33d17a 100%);
       overflow: hidden;
       margin: 0 0 8px 0;
+      position: relative;
     }
-    .confidence-bar-fill {
-      height: 100%;
-      width: 0%;
+    .confidence-bar-mask {
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: 100%;
       transition: width 220ms ease;
-      background: linear-gradient(90deg, #33d17a 0%, #f6c453 55%, #ff6bb0 100%);
+      background: #0a1528;
     }
     .chart-row {
       display: grid;
@@ -188,14 +209,18 @@ HTML = """<!doctype html>
       height: 12px;
       border-radius: 999px;
       border: 1px solid var(--border);
-      background: #0a1528;
+      background: linear-gradient(90deg, #33d17a 0%, #f6c453 55%, #ff6bb0 100%);
       overflow: hidden;
+      position: relative;
     }
     .bar-fill {
-      height: 100%;
-      width: 0%;
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: 100%;
       transition: width 280ms ease;
-      background: linear-gradient(90deg, #4da3ff, #33d17a);
+      background: #0a1528;
     }
     .ok-text { color: var(--ok); font-weight: 700; }
     .err-text { color: var(--err); font-weight: 700; }
@@ -235,6 +260,7 @@ HTML = """<!doctype html>
     <section class=\"top\">
       <div class=\"row\">
         <h2 style=\"margin:0\">EdgeCase Dashboard</h2>
+        <span class=\"brand-tag\">jtl06</span>
         <span id=\"overall_status\" class=\"pill\">idle</span>
         <span id=\"overall_progress\" class=\"pill\">0/0</span>
       </div>
@@ -296,7 +322,8 @@ HTML = """<!doctype html>
           </select>
         </label>
         <button id=\"start_btn\">Start Run</button>
-        <button id=\"reset_btn\" type=\"button\">Clear / Reset</button>
+        <button id=\"pause_btn\" type=\"button\">Pause</button>
+        <button id=\"reset_btn\" class=\"spacer-right\" type=\"button\">Clear / Reset</button>
       </div>
       <div id=\"proc_info\" class=\"meta\"></div>
       <div id=\"overall_msg\" class=\"meta\"></div>
@@ -306,7 +333,7 @@ HTML = """<!doctype html>
       <article class=\"card area-planner\">
         <div class=\"card-head\">
           <h3>Planner</h3>
-          <div class=\"meta\">Plans next run params from evidence.</div>
+          <div class=\"meta\">Plans next run params from evidence</div>
         </div>
         <div id=\"planner_status\" class=\"agent-status\">idle</div>
         <div id=\"planner_task\" class=\"meta\">Waiting for run.</div>
@@ -315,7 +342,7 @@ HTML = """<!doctype html>
       <article class=\"card area-coder\">
         <div class=\"card-head\">
           <h3>Coder</h3>
-          <div class=\"meta\">Suggests minimal instrumentation/fix ideas.</div>
+          <div class=\"meta\">Suggests minimal instrumentation/fix ideas</div>
         </div>
         <div id=\"coder_status\" class=\"agent-status\">idle</div>
         <div id=\"coder_task\" class=\"meta\">Waiting for run.</div>
@@ -324,7 +351,7 @@ HTML = """<!doctype html>
       <article class=\"card area-debugger\">
         <div class=\"card-head\">
           <h3>Debugger</h3>
-          <div class=\"meta\">Checks feasibility and risk.</div>
+          <div class=\"meta\">Checks feasibility and risk</div>
         </div>
         <div id=\"critic_status\" class=\"agent-status\">idle</div>
         <div id=\"critic_task\" class=\"meta\">Waiting for run.</div>
@@ -333,7 +360,7 @@ HTML = """<!doctype html>
       <article class=\"card area-coordinator\">
         <div class=\"card-head\">
           <h3>Coordinator</h3>
-          <div class=\"meta\">Merges outputs into one runbook.</div>
+          <div class=\"meta\">Merges outputs into one runbook</div>
         </div>
         <div id=\"summarizer_status\" class=\"agent-status\">idle</div>
         <div id=\"summarizer_task\" class=\"meta\">Waiting for run.</div>
@@ -342,7 +369,7 @@ HTML = """<!doctype html>
       <article class=\"card area-load\">
         <div class=\"card-head\">
           <h3>Agent Load / Time</h3>
-          <div class=\"meta\">Cumulative active-time split.</div>
+          <div class=\"meta\">Cumulative active-time split</div>
         </div>
         <div class=\"chart-grid\">
           <div class=\"chart-row\"><div>Planner</div><div class=\"bar-wrap\"><div id=\"bar_planner\" class=\"bar-fill\"></div></div><div id=\"pct_planner\">0.0%</div></div>
@@ -356,12 +383,12 @@ HTML = """<!doctype html>
       <article class=\"card area-validator\">
         <div class=\"card-head\">
           <h3>Validator</h3>
-          <div class=\"meta\">Confidence + coder correctness checks.</div>
+          <div class=\"meta\">Confidence + coder correctness checks</div>
         </div>
         <div id=\"verifier_status\" class=\"agent-status\">idle</div>
         <div id=\"verifier_task\" class=\"meta\">Waiting for merged output.</div>
         <div class=\"meta\" id=\"confidence_label\">Confidence Trend: n/a</div>
-        <div class=\"confidence-bar-wrap\"><div id=\"confidence_fill\" class=\"confidence-bar-fill\"></div></div>
+        <div class=\"confidence-bar-wrap\"><div id=\"confidence_mask\" class=\"confidence-bar-mask\"></div></div>
         <pre id=\"verifier_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
       </article>
       <article class=\"card area-overall\">
@@ -377,8 +404,10 @@ HTML = """<!doctype html>
         <pre id=\"history\">No runs yet.</pre>
       </article>
       <article class=\"card area-system\">
-        <h3>System Utilization</h3>
-        <div class=\"meta\">From <code>nvidia-smi</code> (updates every 2.0s).</div>
+        <div class=\"card-head\">
+          <h3>System Utilization</h3>
+          <div class=\"meta\">from <code>nvidia-smi</code></div>
+        </div>
         <pre id=\"system_stats\">Waiting for GPU metrics...</pre>
       </article>
     </section>
@@ -433,6 +462,26 @@ async function resetRunState() {
   } catch (err) {
     document.getElementById('proc_info').textContent = `Reset failed: ${String(err)}`;
     document.getElementById('overall_msg').textContent = 'Unable to reach dashboard backend.';
+  }
+}
+
+async function togglePauseRun() {
+  try {
+    const btn = document.getElementById('pause_btn');
+    const wantPause = btn && btn.textContent !== 'Resume';
+    const res = await fetch('/api/pause', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ pause: wantPause }),
+    });
+    const data = await res.json().catch(() => ({ok:false, message: 'Failed to parse pause response'}));
+    const msg = data.message || `HTTP ${res.status}`;
+    document.getElementById('proc_info').textContent = msg;
+    if (!res.ok) {
+      document.getElementById('overall_msg').textContent = msg;
+    }
+  } catch (err) {
+    document.getElementById('proc_info').textContent = `Pause failed: ${String(err)}`;
   }
 }
 
@@ -508,6 +557,11 @@ function renderStateBundle(bundle) {
     : `process: idle` + (p.exit_code !== null && p.exit_code !== undefined ? ` (last exit=${p.exit_code})` : '');
   const logMsg = (p.log_tail || []).join('\\n');
   setText('proc_info', procMsg + (logMsg ? '\\n' + logMsg : ''));
+  const pauseBtn = document.getElementById('pause_btn');
+  if (pauseBtn) {
+    pauseBtn.disabled = !p.running;
+    pauseBtn.textContent = p.paused ? 'Resume' : 'Pause';
+  }
   renderConfidenceSparkline(state);
   renderSystemStats(p.gpu || {});
   renderAgentChart(state);
@@ -515,8 +569,8 @@ function renderStateBundle(bundle) {
 
 function renderConfidenceSparkline(state) {
   const label = document.getElementById('confidence_label');
-  const fill = document.getElementById('confidence_fill');
-  if (!label || !fill) return;
+  const mask = document.getElementById('confidence_mask');
+  if (!label || !mask) return;
   const stream = state.confidence_stream || [];
   const vals = stream.length
     ? stream.map(p => Number((p || {}).value))
@@ -526,12 +580,12 @@ function renderConfidenceSparkline(state) {
     .map(v => Math.max(0, Math.min(1, v)));
   if (!clean.length) {
     label.textContent = 'Confidence Trend: n/a';
-    fill.style.width = '0%';
+    mask.style.width = '100%';
     return;
   }
   const latest = clean[clean.length - 1];
   label.textContent = `Confidence Trend: ${(latest * 100).toFixed(1)}%`;
-  fill.style.width = `${(latest * 100).toFixed(1)}%`;
+  mask.style.width = `${(100 - latest * 100).toFixed(1)}%`;
 }
 
 function renderSystemStats(gpu) {
@@ -594,7 +648,7 @@ function renderAgentChart(state) {
     const pct = total > 0 ? (vals[r] / total) * 100 : 0;
     const bar = document.getElementById(`bar_${r}`);
     const label = document.getElementById(`pct_${r}`);
-    if (bar) bar.style.width = `${pct}%`;
+    if (bar) bar.style.width = `${(100 - pct).toFixed(1)}%`;
     if (label) label.textContent = `${pct.toFixed(1)}% (${vals[r].toFixed(1)}s)`;
   }
   setText('chart_meta', `Total active time: ${total.toFixed(1)}s`);
@@ -625,6 +679,7 @@ function initSSE() {
 }
 
 document.getElementById('start_btn').addEventListener('click', startRun);
+document.getElementById('pause_btn').addEventListener('click', togglePauseRun);
 document.getElementById('reset_btn').addEventListener('click', resetRunState);
 document.getElementById('case').addEventListener('change', updateTargetVisibility);
 refreshOnce();
@@ -663,6 +718,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path in {"/api/start", "/api/run"}:
             self._handle_start()
             return
+        if parsed.path == "/api/pause":
+            self._handle_pause()
+            return
         if parsed.path == "/api/reset":
             self._handle_reset()
             return
@@ -687,6 +745,7 @@ class Handler(BaseHTTPRequestHandler):
 
             with LOCK:
                 global PROCESS
+                global PROCESS_PAUSED
                 if PROCESS is not None and PROCESS.poll() is None:
                     self._send_json({"ok": False, "message": "Run already in progress."}, code=409)
                     return
@@ -770,6 +829,7 @@ class Handler(BaseHTTPRequestHandler):
                     stderr=logf,
                     text=True,
                 )
+                PROCESS_PAUSED = False
 
             self._send_json({"ok": True, "message": f"Started {requested_mode} run for case={case} runs={runs}."})
         except Exception as exc:
@@ -798,12 +858,41 @@ class Handler(BaseHTTPRequestHandler):
             STATE_PATH.write_text(json.dumps(fail_state, indent=2), encoding="utf-8")
             self._send_json({"ok": False, "message": f"Failed to start run: {exc}"}, code=500)
 
+    def _handle_pause(self) -> None:
+        try:
+            content_len = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(content_len) if content_len else b"{}"
+            payload = json.loads(body.decode("utf-8") or "{}")
+            want_pause = bool(payload.get("pause", True))
+        except Exception:
+            want_pause = True
+
+        with LOCK:
+            global PROCESS_PAUSED
+            running = PROCESS is not None and PROCESS.poll() is None
+            if not running or PROCESS is None:
+                self._send_json({"ok": False, "message": "No active run to pause/resume."}, code=409)
+                return
+            try:
+                if want_pause:
+                    os.kill(PROCESS.pid, signal.SIGSTOP)
+                    PROCESS_PAUSED = True
+                    self._send_json({"ok": True, "message": f"Paused run (pid={PROCESS.pid})."})
+                else:
+                    os.kill(PROCESS.pid, signal.SIGCONT)
+                    PROCESS_PAUSED = False
+                    self._send_json({"ok": True, "message": f"Resumed run (pid={PROCESS.pid})."})
+            except Exception as exc:
+                self._send_json({"ok": False, "message": f"Pause/resume failed: {exc}"}, code=500)
+
     def _handle_reset(self) -> None:
         with LOCK:
+            global PROCESS_PAUSED
             running = PROCESS is not None and PROCESS.poll() is None
             if running:
                 self._send_json({"ok": False, "message": "Cannot reset while a run is in progress."}, code=409)
                 return
+            PROCESS_PAUSED = False
         reset_state = {
             "overall": {
                 "status": "idle",
@@ -899,11 +988,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _read_process(self) -> dict:
         with LOCK:
+            global PROCESS_PAUSED
             running = PROCESS is not None and PROCESS.poll() is None
             pid = PROCESS.pid if PROCESS is not None else None
             exit_code = None if running or PROCESS is None else PROCESS.poll()
+            paused = bool(PROCESS_PAUSED) if running else False
+            if not running:
+                PROCESS_PAUSED = False
         return {
             "running": running,
+            "paused": paused,
             "pid": pid,
             "exit_code": exit_code,
             "log_tail": self._read_log_tail(),

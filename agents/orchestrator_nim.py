@@ -34,6 +34,7 @@ class NIMOrchestrator:
         self.coordinator_rework_rounds = max(0, int(os.getenv("NIM_COORDINATOR_REWORK_ROUNDS", "0")))
         self.peer_message_rounds = max(0, int(os.getenv("NIM_PEER_MESSAGE_ROUNDS", "1")))
         self.timeout_s = float(os.getenv("NIM_TIMEOUT_S", "3.0"))
+        self.max_tokens = max(64, int(os.getenv("NIM_MAX_TOKENS", "512")))
         self.min_visible_running_s = float(os.getenv("NIM_MIN_RUNNING_S", "0.5"))
         self.role_min_visible_s = {
             "planner": float(os.getenv("NIM_MIN_RUNNING_PLANNER_S", "0.5")),
@@ -298,6 +299,7 @@ class NIMOrchestrator:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.2,
+            "max_tokens": self.max_tokens,
         }
         async with session.post(self.chat_url, json=payload) as resp:
             if resp.status >= 400:
