@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hil-multi-agent-debugger"
+name = "edgecase"
 version = "0.1.0"
-description = "Multi-agent HIL debugger for Pi UART with local NIM endpoint"
+description = "EdgeCase: multi-agent HIL debugger for RP2350 UART with local NIM endpoint"
 requires-python = ">=3.10"
 dependencies = []
 

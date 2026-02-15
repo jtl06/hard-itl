@@ -4,9 +4,8 @@ from schemas.types import AnalysisResult, TriageResult
 
 
 class PlannerAgent:
-    # Symmetric probe sequence around target for demo visibility:
-    # below, above, tighter below, tighter above, then settle.
-    _BAUD_PROBE_OFFSETS = [-38400, 38400, -19200, 19200, -9600, 9600, 0]
+    # Try common UART baud rates first for clearer demo behavior.
+    _COMMON_BAUDS = [9600, 19200, 38400, 57600, 74880, 115200, 230400, 460800, 921600, 1000000]
 
     def initial_request(self) -> dict[str, int]:
         # Default initial search point for baud-hunt demos.
@@ -25,10 +24,15 @@ class PlannerAgent:
         if "guess_baud" in previous_params:
             target = int(previous_params.get("target_baud", 115200))
             idx = int(previous_params.get("baud_probe_idx", 0))
-            if idx >= len(self._BAUD_PROBE_OFFSETS):
-                idx = len(self._BAUD_PROBE_OFFSETS) - 1
-            offset = self._BAUD_PROBE_OFFSETS[idx]
-            next_guess = max(1200, int(target + offset))
+            common = self._ordered_common_bauds(target)
+            if idx < len(common):
+                prev_guess = int(previous_params.get("guess_baud", 0))
+                while idx < len(common) - 1 and common[idx] == prev_guess:
+                    idx += 1
+                next_guess = common[idx]
+            else:
+                # After common-rate sweep, converge directly for demo completion.
+                next_guess = target
             return {
                 "guess_baud": next_guess,
                 "target_baud": target,
@@ -69,3 +73,6 @@ class PlannerAgent:
         uart_rate = max(115200, int(previous_params.get("uart_rate", 1000000)) // 2)
         buffer_size = min(256, max(64, int(previous_params.get("buffer_size", 16)) * 2))
         return {"uart_rate": uart_rate, "buffer_size": buffer_size}
+
+    def _ordered_common_bauds(self, target: int) -> list[int]:
+        return sorted(self._COMMON_BAUDS, key=lambda b: (abs(b - target), b))

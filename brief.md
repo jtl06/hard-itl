@@ -1,4 +1,4 @@
-# Multi-agent HIL debugger (RP2350 + USB CDC UART + DGX Spark NIM)
+# EdgeCase (RP2350 + USB CDC UART + DGX Spark NIM)
 
 ## Goal
 Build a hackathon-ready, multi-agent hardware-in-the-loop (HIL) debugger where:

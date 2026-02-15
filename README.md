@@ -1,4 +1,4 @@
-# Multi-agent HIL debugger (RP2350 + USB CDC UART + local NIM)
+# EdgeCase (RP2350 + USB CDC UART + local NIM)
 
 Local-only multi-agent HIL pipeline. Only `runner/` touches hardware (`build`, `flash`, `/dev/tty*`).
 
@@ -137,6 +137,7 @@ UI sections:
 
 Top controls:
 - `Case`, `Runs`, `Mode` (`mock`/`real`)
+- `Agent Mode` (`sequential` tag-team or `parallel`)
 - one case-specific target input shown at a time:
   - baud, frame, parity, or magic
 
@@ -211,6 +212,17 @@ make -C firmware rp2350_signature_check
 Environment defaults used by agents:
 - `NIM_CHAT_URL=http://localhost:8000/v1/chat/completions`
 - `NIM_MODEL=nvidia/nemotron-nano-9b-v2`
+- `NIM_EXECUTION_MODE=sequential` (`sequential` or `parallel`)
+
+Config option:
+- `nim.execution_mode` in `config.yaml` / `config.real.example.yaml`
+- `nim.coordinator_rework_rounds` (sequential mode only; coordinator can send coder back for refinement)
+- `nim.peer_message_rounds` (agent-to-agent follow-up rounds before coordinator merge)
+- per-run override via CLI `--nim-mode` or dashboard `Agent Mode` selector
+
+Peer message format (inside agent outputs):
+- `@coder: tighten instrumentation for missing RUN_END`
+- `CALL critic: validate risk of this patch`
 
 Start local NIM (Docker + NVIDIA GPU):
 

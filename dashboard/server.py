@@ -23,7 +23,7 @@ HTML = """<!doctype html>
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />
-  <title>HIL Agent Dashboard</title>
+  <title>EdgeCase Dashboard</title>
   <style>
     :root {
       --bg: #0b1320;
@@ -178,7 +178,7 @@ HTML = """<!doctype html>
   <div class=\"wrap\">
     <section class=\"top\">
       <div class=\"row\">
-        <h2 style=\"margin:0\">HIL Multi-Agent Dashboard</h2>
+        <h2 style=\"margin:0\">EdgeCase Dashboard</h2>
         <span id=\"overall_status\" class=\"pill\">idle</span>
         <span id=\"overall_progress\" class=\"pill\">0/0</span>
       </div>
@@ -211,6 +211,12 @@ HTML = """<!doctype html>
         <label id=\"target_magic_wrap\" style=\"display:none;\">Target Magic <input id=\"target_magic\" value=\"0xC0FFEE42\"></label>
         <label>Mode
           <select id=\"mode\"><option value=\"mock\">mock</option><option value=\"real\">real</option></select>
+        </label>
+        <label>Agent Mode
+          <select id=\"agent_mode\">
+            <option value=\"sequential\">sequential</option>
+            <option value=\"parallel\">parallel</option>
+          </select>
         </label>
         <button id=\"start_btn\">Start Run</button>
       </div>
@@ -281,6 +287,7 @@ async function startRun() {
       case: caseId,
       runs: Number(document.getElementById('runs').value || 8),
       mode: document.getElementById('mode').value,
+      agent_mode: document.getElementById('agent_mode').value,
     };
     if (caseId === 'uart_demo') {
       payload.target_baud = Number(document.getElementById('target_baud').value || 0);
@@ -477,6 +484,7 @@ class Handler(BaseHTTPRequestHandler):
             target_frame = str(payload.get("target_frame", ""))
             target_parity = str(payload.get("target_parity", ""))
             target_magic = str(payload.get("target_magic", ""))
+            agent_mode = str(payload.get("agent_mode", "sequential"))
 
             with LOCK:
                 global PROCESS
@@ -506,7 +514,7 @@ class Handler(BaseHTTPRequestHandler):
                 init_state = {
                     "overall": {
                         "status": "running",
-                        "message": f"Launching run: case={case} mode={mode} runs={runs}",
+                        "message": f"Launching run: case={case} mode={mode} agent_mode={agent_mode} runs={runs}",
                         "case_id": case,
                         "mode": mode,
                         "runs_total": runs,
@@ -534,18 +542,20 @@ class Handler(BaseHTTPRequestHandler):
                     case,
                     "--runs",
                     str(runs),
-                "--mode",
-                mode,
-                "--target-baud",
-                str(target_baud),
-                "--target-frame",
-                target_frame,
-                "--target-parity",
-                target_parity,
-                "--target-magic",
-                target_magic,
-                "--state-file",
-                str(STATE_PATH),
+                    "--mode",
+                    mode,
+                    "--target-baud",
+                    str(target_baud),
+                    "--target-frame",
+                    target_frame,
+                    "--target-parity",
+                    target_parity,
+                    "--target-magic",
+                    target_magic,
+                    "--nim-mode",
+                    agent_mode,
+                    "--state-file",
+                    str(STATE_PATH),
                     "--live-uart",
                     "--trace",
                 ]

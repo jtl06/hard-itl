@@ -19,6 +19,9 @@ nim:
   enabled: true
   chat_url: http://localhost:8000/v1/chat/completions
   model: nvidia/nemotron-nano-9b-v2
+  execution_mode: sequential
+  coordinator_rework_rounds: 1
+  peer_message_rounds: 1
 
 cases:
   uart_demo:

@@ -67,12 +67,17 @@ def run_case(
     target_frame: str = "",
     target_parity: str = "",
     target_magic: str = "",
+    nim_mode: str = "",
 ) -> list[dict[str, Any]]:
     cfg = parse_config("config.yaml")
     nim_cfg = cfg.get("nim", {})
     nim_enabled = bool(nim_cfg.get("enabled", True))
     os.environ.setdefault("NIM_CHAT_URL", str(nim_cfg.get("chat_url", "http://localhost:8000/v1/chat/completions")))
     os.environ.setdefault("NIM_MODEL", str(nim_cfg.get("model", "nvidia/nemotron-nano-9b-v2")))
+    selected_nim_mode = nim_mode or str(nim_cfg.get("execution_mode", "sequential"))
+    os.environ["NIM_EXECUTION_MODE"] = selected_nim_mode
+    os.environ["NIM_COORDINATOR_REWORK_ROUNDS"] = str(int(nim_cfg.get("coordinator_rework_rounds", 1)))
+    os.environ["NIM_PEER_MESSAGE_ROUNDS"] = str(int(nim_cfg.get("peer_message_rounds", 1)))
 
     runner_cfg = RunnerConfig(
         runs_root=str(cfg.get("paths", {}).get("runs_root", "runs")),
@@ -652,6 +657,7 @@ def main() -> None:
     parser.add_argument("--target-frame", default="", help="Target frame (e.g. 8N1) for framing_hunt")
     parser.add_argument("--target-parity", default="", help="Target parity (none/even/odd) for parity_hunt")
     parser.add_argument("--target-magic", default="", help="Target magic hex (e.g. 0xC0FFEE42) for signature_check")
+    parser.add_argument("--nim-mode", choices=["sequential", "parallel"], default="", help="Agent execution mode")
     args = parser.parse_args()
 
     try:
@@ -670,6 +676,7 @@ def main() -> None:
             target_frame=args.target_frame,
             target_parity=args.target_parity,
             target_magic=args.target_magic,
+            nim_mode=args.nim_mode,
         )
     except FlashError as exc:
         if args.state_file:
