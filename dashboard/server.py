@@ -78,9 +78,14 @@ HTML = """<!doctype html>
     }
     button { cursor: pointer; background: #1d3359; }
     button:hover { filter: brightness(1.1); }
-    .grid {
+    .dashboard-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(260px, 1fr));
+      grid-template-columns: repeat(3, minmax(300px, 1fr));
+      grid-template-areas:
+        "planner coder load"
+        "debugger coordinator load"
+        "overall overall uart"
+        "overall overall tracker";
       gap: 12px;
     }
     .card {
@@ -107,15 +112,15 @@ HTML = """<!doctype html>
       background: #0a1528;
     }
     .agent-status { font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }
-    .layout-main {
-      display: grid;
-      grid-template-columns: 1.2fr 1fr;
-      gap: 12px;
-    }
-    .right-stack {
-      display: grid;
-      gap: 12px;
-    }
+    .area-planner { grid-area: planner; }
+    .area-coder { grid-area: coder; }
+    .area-debugger { grid-area: debugger; }
+    .area-coordinator { grid-area: coordinator; }
+    .area-load { grid-area: load; }
+    .area-overall { grid-area: overall; min-height: 350px; }
+    .area-uart { grid-area: uart; }
+    .area-tracker { grid-area: tracker; }
+    .area-load { min-height: 350px; }
     .chart-grid {
       display: grid;
       gap: 8px;
@@ -142,10 +147,29 @@ HTML = """<!doctype html>
       background: linear-gradient(90deg, #4da3ff, #33d17a);
     }
     @media (max-width: 1400px) {
-      .grid { grid-template-columns: repeat(2, minmax(260px, 1fr)); }
+      .dashboard-grid {
+        grid-template-columns: repeat(2, minmax(280px, 1fr));
+        grid-template-areas:
+          "planner coder"
+          "debugger coordinator"
+          "load load"
+          "overall overall"
+          "uart tracker";
+      }
     }
     @media (max-width: 920px) {
-      .grid, .layout-main { grid-template-columns: 1fr; }
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "planner"
+          "coder"
+          "debugger"
+          "coordinator"
+          "load"
+          "overall"
+          "uart"
+          "tracker";
+      }
     }
   </style>
 </head>
@@ -193,64 +217,58 @@ HTML = """<!doctype html>
       <div id=\"overall_msg\" class=\"meta\"></div>
     </section>
 
-    <section class=\"grid\">
-      <article class=\"card\">
+    <section class=\"dashboard-grid\">
+      <article class=\"card area-planner\">
         <h3>Planner</h3>
         <div class=\"meta\">Plans next run params from current evidence.</div>
         <div id=\"planner_status\" class=\"agent-status\">idle</div>
         <div id=\"planner_task\" class=\"meta\">Waiting for run.</div>
         <pre id=\"planner_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
       </article>
-      <article class=\"card\">
+      <article class=\"card area-coder\">
         <h3>Coder</h3>
         <div class=\"meta\">Suggests minimal instrumentation/fix ideas.</div>
         <div id=\"coder_status\" class=\"agent-status\">idle</div>
         <div id=\"coder_task\" class=\"meta\">Waiting for run.</div>
         <pre id=\"coder_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
       </article>
-      <article class=\"card\">
+      <article class=\"card area-debugger\">
         <h3>Debugger</h3>
         <div class=\"meta\">Checks feasibility and risks.</div>
         <div id=\"critic_status\" class=\"agent-status\">idle</div>
         <div id=\"critic_task\" class=\"meta\">Waiting for run.</div>
         <pre id=\"critic_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
       </article>
-      <article class=\"card\">
+      <article class=\"card area-coordinator\">
         <h3>Coordinator</h3>
         <div class=\"meta\">Merges outputs into one runbook.</div>
         <div id=\"summarizer_status\" class=\"agent-status\">idle</div>
         <div id=\"summarizer_task\" class=\"meta\">Waiting for run.</div>
         <pre id=\"summarizer_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
       </article>
-    </section>
-
-    <section class=\"layout-main\">
-      <article class=\"card\">
+      <article class=\"card area-load\">
+        <h3>Agent Load / Time</h3>
+        <div class=\"meta\">Cumulative active-time split (updates every 1s).</div>
+        <div class=\"chart-grid\">
+          <div class=\"chart-row\"><div>Planner</div><div class=\"bar-wrap\"><div id=\"bar_planner\" class=\"bar-fill\"></div></div><div id=\"pct_planner\">0.0%</div></div>
+          <div class=\"chart-row\"><div>Coder</div><div class=\"bar-wrap\"><div id=\"bar_coder\" class=\"bar-fill\"></div></div><div id=\"pct_coder\">0.0%</div></div>
+          <div class=\"chart-row\"><div>Debugger</div><div class=\"bar-wrap\"><div id=\"bar_critic\" class=\"bar-fill\"></div></div><div id=\"pct_critic\">0.0%</div></div>
+          <div class=\"chart-row\"><div>Coordinator</div><div class=\"bar-wrap\"><div id=\"bar_summarizer\" class=\"bar-fill\"></div></div><div id=\"pct_summarizer\">0.0%</div></div>
+        </div>
+        <div id=\"chart_meta\" class=\"meta\"></div>
+      </article>
+      <article class=\"card area-overall\">
         <h3>Overall Output</h3>
         <pre id=\"overall_output\">No output yet. Start a run to populate the merged summarizer output.</pre>
       </article>
-
-      <div class=\"right-stack\">
-        <article class=\"card\">
-          <h3>Latest UART</h3>
-          <pre id=\"latest_uart\">No UART lines yet. Start a run to stream latest uart.log tail.</pre>
-        </article>
-        <article class=\"card\">
-          <h3>Run Tracker</h3>
-          <pre id=\"history\">No runs yet.</pre>
-        </article>
-        <article class=\"card\">
-          <h3>Agent Load / Time</h3>
-          <div class=\"meta\">Cumulative active-time split (updates every 1s).</div>
-          <div class=\"chart-grid\">
-            <div class=\"chart-row\"><div>Planner</div><div class=\"bar-wrap\"><div id=\"bar_planner\" class=\"bar-fill\"></div></div><div id=\"pct_planner\">0.0%</div></div>
-            <div class=\"chart-row\"><div>Coder</div><div class=\"bar-wrap\"><div id=\"bar_coder\" class=\"bar-fill\"></div></div><div id=\"pct_coder\">0.0%</div></div>
-            <div class=\"chart-row\"><div>Debugger</div><div class=\"bar-wrap\"><div id=\"bar_critic\" class=\"bar-fill\"></div></div><div id=\"pct_critic\">0.0%</div></div>
-            <div class=\"chart-row\"><div>Coordinator</div><div class=\"bar-wrap\"><div id=\"bar_summarizer\" class=\"bar-fill\"></div></div><div id=\"pct_summarizer\">0.0%</div></div>
-          </div>
-          <div id=\"chart_meta\" class=\"meta\"></div>
-        </article>
-      </div>
+      <article class=\"card area-uart\">
+        <h3>Latest UART</h3>
+        <pre id=\"latest_uart\">No UART lines yet. Start a run to stream latest uart.log tail.</pre>
+      </article>
+      <article class=\"card area-tracker\">
+        <h3>Run Tracker</h3>
+        <pre id=\"history\">No runs yet.</pre>
+      </article>
     </section>
   </div>
 

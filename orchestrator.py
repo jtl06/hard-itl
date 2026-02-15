@@ -223,9 +223,9 @@ def run_case(
         _set_agent(
             state,
             "summarizer",
-            "running",
-            "Merging planner/coder/debugger outputs",
-            _reasoning_summary(state, "summarizer", "running", "fan-in"),
+            "idle",
+            "Waiting for coder/debugger outputs",
+            _reasoning_summary(state, "summarizer", "idle", "awaiting coder/debugger completion"),
         )
         if state_path is not None:
             _write_state(state_path, state)
