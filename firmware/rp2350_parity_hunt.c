@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
+#include "bootsel_helper.h"
 
 // Parity-hunt demo firmware.
 // Emits structured UART lines continuously with RUN_START/RUN_END markers.
@@ -9,11 +10,13 @@ int main(void) {
 
     uint32_t cycle = 0;
     while (true) {
+        bootsel_poll_command();
         printf("RUN_START parity_%lu\n", (unsigned long)cycle);
         printf("INFO demo parity_hunt\n");
         printf("INFO parity_hint even\n");
         printf("INFO pattern 0x00 0xFF 0x7E 0x81\n");
         for (int i = 0; i < 5; ++i) {
+            bootsel_poll_command();
             printf("INFO heartbeat %d cycle=%lu\n", i, (unsigned long)cycle);
             sleep_ms(200);
         }

@@ -87,6 +87,7 @@ def run_case(
         real_elf_path=str(cfg.get("runner", {}).get("real_elf_path", "")),
         real_uf2_path=str(cfg.get("runner", {}).get("real_uf2_path", "")),
         openocd_cfg=str(cfg.get("runner", {}).get("openocd_cfg", "")),
+        auto_bootsel=bool(cfg.get("runner", {}).get("auto_bootsel", True)),
     )
 
     runner = Runner(runner_cfg)

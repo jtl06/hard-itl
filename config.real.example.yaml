@@ -1,6 +1,7 @@
 runner:
   flash_method: picotool
   openocd_cfg: "" # optional when flash_method=openocd; supports ';' separated cfgs, e.g. interface/cmsis-dap.cfg;target/rp2350.cfg
+  auto_bootsel: true # send "BOOTSEL" over USB CDC before picotool flash
   serial_port: ""                  # leave empty for autodetect
   serial_baud: 115200
   serial_timeout_s: 8

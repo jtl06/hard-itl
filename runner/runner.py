@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from runner.flash import FlashError, Flasher
-from runner.serial_capture import capture_uart, wait_for_serial_port
+from runner.serial_capture import autodetect_serial_port, capture_uart, wait_for_serial_port
 
 
 @dataclass
@@ -27,6 +28,7 @@ class RunnerConfig:
     real_elf_path: str = ""
     real_uf2_path: str = ""
     openocd_cfg: str = ""
+    auto_bootsel: bool = True
 
 
 class Runner:
@@ -64,6 +66,8 @@ class Runner:
         )
 
         diagnostics: list[str] = []
+        if mode == "real":
+            self._maybe_request_bootsel(diagnostics)
         try:
             flash_ok, flash_method, flash_diag = self.flash(uf2_path, method=self.config.flash_method, mode=mode)
             diagnostics.extend(flash_diag)
@@ -132,6 +136,36 @@ class Runner:
             "serial_port": resolved_port,
             "diagnostics": diagnostics,
         }
+
+    def _maybe_request_bootsel(self, diagnostics: list[str]) -> None:
+        if not self.config.auto_bootsel:
+            diagnostics.append("auto BOOTSEL request disabled in runner config")
+            return
+        if self.config.flash_method == "openocd":
+            diagnostics.append("auto BOOTSEL request skipped for openocd flash method")
+            return
+
+        port = self.config.serial_port or autodetect_serial_port(prefer_by_id=self.config.prefer_by_id)
+        if not port:
+            diagnostics.append("auto BOOTSEL request skipped: no serial port found")
+            return
+
+        try:
+            fd = os.open(port, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as exc:
+            diagnostics.append(f"auto BOOTSEL request failed to open {port}: {exc}")
+            return
+
+        try:
+            os.write(fd, b"BOOTSEL\n")
+            time.sleep(0.05)
+            os.write(fd, b"ENTER_BOOTSEL\n")
+            diagnostics.append(f"auto BOOTSEL request sent on {port}")
+            time.sleep(0.25)
+        except OSError as exc:
+            diagnostics.append(f"auto BOOTSEL request write failed on {port}: {exc}")
+        finally:
+            os.close(fd)
 
     def _build_firmware_artifacts(
         self,

@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "pico/stdlib.h"
+#include "bootsel_helper.h"
 
 #ifndef TARGET_MAGIC
 #define TARGET_MAGIC 0xC0FFEE42u
@@ -34,6 +35,7 @@ int main(void) {
 
     uint32_t cycle = 0;
     while (true) {
+        bootsel_poll_command();
         printf("RUN_START signature_%lu\n", (unsigned long)cycle);
         printf("INFO demo signature_check cycle=%lu\n", (unsigned long)cycle);
         printf("INFO payload=%s\n", payload);

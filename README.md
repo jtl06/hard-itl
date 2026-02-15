@@ -158,6 +158,7 @@ Default config uses:
 - `build_cmd: make -C firmware REQUIRE_PICO_SDK=1 rp2350_{case_id}`
 - `real_uf2_path: firmware/build/firmware.uf2`
 - `flash_method: picotool`
+- `auto_bootsel: true` (runner sends `BOOTSEL` command over USB CDC before flashing)
 
 If `runner.real_uf2_path` is missing, orchestrator exits with configuration error.
 If the UF2 appears to be a placeholder artifact, real mode aborts before flashing.
@@ -186,6 +187,9 @@ Notes:
 - Serial setup in code currently uses Linux-style `stty -F ...`.
 - In real mode, UART data is actual DUT output; synthetic markers are not injected.
 - If firmware never prints `RUN_END`, run fails with `ERROR TIMEOUT missing RUN_END`.
+- Firmware targets now support firmware-assisted BOOTSEL:
+  - runner sends `BOOTSEL` / `ENTER_BOOTSEL` over serial
+  - firmware jumps to ROM bootloader via `reset_usb_boot(...)`
 
 ## Firmware targets
 

@@ -1,6 +1,7 @@
 runner:
   flash_method: picotool
   openocd_cfg: ""
+  auto_bootsel: true
   serial_port: ""
   serial_baud: 115200
   serial_timeout_s: 8

@@ -2,6 +2,7 @@
 
 This folder includes:
 
+- `bootsel_helper.h`: firmware-side BOOTSEL command handler (`BOOTSEL` / `ENTER_BOOTSEL`).
 - `rp2350_uart_demo.c`: baud-hunt demo marker stream.
 - `rp2350_framing_hunt.c`: framing-hunt demo marker stream.
 - `rp2350_parity_hunt.c`: parity-hunt demo marker stream.
@@ -44,6 +45,10 @@ For real hardware runs, enforce a real SDK build (no placeholders):
 ```bash
 make -C firmware REQUIRE_PICO_SDK=1 rp2350_uart_demo
 ```
+
+Runtime BOOTSEL helper:
+- Demo firmware polls USB CDC input and jumps to ROM bootloader on `BOOTSEL` command.
+- Runner can send this automatically before picotool flashing (`runner.auto_bootsel: true`).
 
 If your SDK/board differs, you can override board selection:
 
