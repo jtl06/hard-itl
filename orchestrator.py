@@ -217,10 +217,21 @@ def run_case(
         if live or verbose:
             print(f"[run {run_index}/{runs}] start case={case_id} params={params}")
         uart_stream: list[str] = []
+        debug_early_started = False
 
         def _on_uart_line(line: str) -> None:
+            nonlocal debug_early_started
             uart_stream.append(line)
             state["latest_uart"] = uart_stream[-uart_tail_lines:]
+            if (not debug_early_started) and " ERROR " in f" {line} ":
+                debug_early_started = True
+                _set_agent(
+                    state,
+                    "critic",
+                    "running",
+                    "Early error triage from live UART",
+                    _reasoning_summary(state, "critic", "running", "live error observed"),
+                )
             if live_uart or verbose:
                 print(f"[uart] {line}")
             if state_path is not None:
@@ -335,6 +346,7 @@ def run_case(
                 "run": run_index,
                 "run_id": run_result["run_id"],
                 "status": analysis.pass_fail,
+                "confidence": _derive_confidence(nim_summary, analysis.metrics, analysis.pass_fail),
                 "guess_key": _guess_key(params) or "",
                 "target_key": _target_key_for_guess(_guess_key(params) or "") or "",
                 "guess_value": _guess_value(params),
@@ -363,6 +375,7 @@ def run_case(
             "run": run_index,
             "run_id": run_result["run_id"],
             "status": analysis.pass_fail,
+            "confidence": _derive_confidence(nim_summary, analysis.metrics, analysis.pass_fail),
             "guess_key": _guess_key(params) or "",
             "target_key": _target_key_for_guess(_guess_key(params) or "") or "",
             "guess_value": _guess_value(params),
@@ -559,7 +572,7 @@ def _nim_status_update(
         "coder": "Drafting instrumentation suggestions",
         "critic": "Reviewing risk and feasibility",
         "summarizer": "Coordinating merged runbook",
-        "verifier": "Scoring confidence from evidence",
+        "verifier": "Validating coder output and scoring confidence",
     }
     _set_agent(state, role, status, task_map.get(role, role.title()), reasoning)
     if trace_to_stdout and role in {"planner", "critic", "summarizer", "verifier"}:
@@ -580,14 +593,14 @@ def _reasoning_summary(state: dict[str, Any], role: str, status: str, message: s
         "coder": "instrumentation gap may hide run boundary or error details",
         "critic": "proposed change may violate runner-only hardware boundaries",
         "summarizer": "best next step is smallest experiment that can confirm root cause",
-        "verifier": "evidence quality may be insufficient for high-confidence acceptance",
+        "verifier": "coder proposal may contain typo/key/value issues that block safe execution",
     }
     next_map = {
         "planner": "propose conservative uart_rate/buffer_size experiment",
         "coder": "suggest minimal logging/marker patch only",
         "critic": "flag feasibility/risk and request safer fallback",
         "summarizer": "merge outputs into operator runbook",
-        "verifier": "publish confidence and explicit acceptance criteria",
+        "verifier": "audit coder output and publish confidence + acceptance criteria",
     }
     hyp = hypothesis_map.get(role, "root cause under review")
     nxt = next_map.get(role, "continue analysis")
@@ -719,6 +732,24 @@ def _baud_options_from_case_cfg(case_cfg: dict[str, Any]) -> list[int]:
             continue
     uniq = sorted({x for x in vals if x >= 1200})
     return uniq if uniq else list(COMMON_BAUD_OPTIONS)
+
+
+def _derive_confidence(summary_text: str, metrics: dict[str, Any], status: str) -> float:
+    text = summary_text or ""
+    m = re.search(r"\bconfidence\s*[:=\[]?\s*(0(?:\.\d+)?|1(?:\.0+)?)\b", text, flags=re.IGNORECASE)
+    if m:
+        try:
+            v = float(m.group(1))
+            return max(0.0, min(1.0, round(v, 3)))
+        except ValueError:
+            pass
+    # Fallback confidence heuristic when no explicit validator value is present.
+    err = int(metrics.get("error_count", 0) or 0)
+    miss_start = bool(metrics.get("missing_start", False))
+    miss_end = bool(metrics.get("missing_end", False))
+    base = 0.92 if status == "pass" else 0.55
+    penalty = min(0.45, err * 0.12) + (0.12 if miss_start else 0.0) + (0.12 if miss_end else 0.0)
+    return round(max(0.05, min(0.99, base - penalty)), 3)
 
 
 def _normalize_case_params(

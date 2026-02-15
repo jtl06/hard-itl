@@ -54,7 +54,10 @@ class NIMOrchestrator:
                 AgentOutput("planner", "Fallback: run uart_rate=230400,buffer_size=64 then 115200/128."),
                 AgentOutput("coder", "Fallback: ensure timestamped UART lines and explicit ERROR codes."),
                 AgentOutput("critic", "Fallback: keep hardware access constrained to runner module."),
-                AgentOutput("verifier", "Fallback: confidence=0.42 because RUN_END and marker quality remain unstable."),
+                AgentOutput(
+                    "verifier",
+                    "Fallback: confidence=0.42; validator flags possible typo/malformed key risks in coder proposal.",
+                ),
             ]
             if status_callback is not None:
                 status_callback("planner", "running", "Planning next experiments from UART evidence.")
@@ -90,8 +93,10 @@ class NIMOrchestrator:
             "Enforce runner-only hardware access and UART-only truth layer assumptions."
         )
         verifier_prompt = (
-            "You are verifier agent. Judge evidence quality and confidence from UART-only data. "
-            "Return a concise verdict with confidence in [0,1], blockers, and acceptance criteria."
+            "You are verifier agent (validator). Judge evidence quality and confidence from UART-only data, "
+            "and audit coder output for correctness risks: typos, malformed parameter keys, invalid value ranges, "
+            "or contradictory patch instructions. "
+            "Return concise sections: confidence[0,1], coder_validation, blockers, acceptance_criteria."
         )
         summarizer_prompt = (
             "You are summarizer agent. Merge planner/coder/critic/verifier outputs into one actionable runbook. "

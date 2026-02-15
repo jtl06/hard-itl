@@ -27,6 +27,7 @@ GPU_UNIFIED_MEM_NOTE = (
     "Unified memory expected on DGX Spark. nvidia-smi may not report dedicated VRAM usage.\n"
     "Use: top, htop, free"
 )
+DGX_SPARK_MAX_POWER_W = 140.0
 
 HTML = """<!doctype html>
 <html>
@@ -144,6 +145,18 @@ HTML = """<!doctype html>
     .chart-grid {
       display: grid;
       gap: 8px;
+    }
+    .spark-wrap {
+      margin: 6px 0 8px 0;
+      border: 1px solid #21355a;
+      border-radius: 8px;
+      background: #0a1528;
+      padding: 6px;
+    }
+    #confidence_sparkline {
+      width: 100%;
+      height: 44px;
+      display: block;
     }
     .chart-row {
       display: grid;
@@ -317,6 +330,19 @@ HTML = """<!doctype html>
         <div class=\"meta\">Independent confidence and acceptance check.</div>
         <div id=\"verifier_status\" class=\"agent-status\">idle</div>
         <div id=\"verifier_task\" class=\"meta\">Waiting for merged output.</div>
+        <div class=\"meta\" id=\"confidence_label\">Confidence Trend: n/a</div>
+        <div class=\"spark-wrap\">
+          <svg id=\"confidence_sparkline\" viewBox=\"0 0 300 44\" preserveAspectRatio=\"none\" aria-label=\"Confidence sparkline\">
+            <defs>
+              <linearGradient id=\"confGrad\" x1=\"0%\" y1=\"0%\" x2=\"100%\" y2=\"0%\">
+                <stop offset=\"0%\" stop-color=\"#33d17a\" />
+                <stop offset=\"55%\" stop-color=\"#f6c453\" />
+                <stop offset=\"100%\" stop-color=\"#ff6bb0\" />
+              </linearGradient>
+            </defs>
+            <polyline id=\"confidence_polyline\" fill=\"none\" stroke=\"url(#confGrad)\" stroke-width=\"3\" points=\"\" />
+          </svg>
+        </div>
         <pre id=\"verifier_fragment\">Evidence -> Hypothesis -> Next action will appear here.</pre>
       </article>
       <article class=\"card area-overall\">
@@ -463,8 +489,36 @@ function renderStateBundle(bundle) {
     : `process: idle` + (p.exit_code !== null && p.exit_code !== undefined ? ` (last exit=${p.exit_code})` : '');
   const logMsg = (p.log_tail || []).join('\\n');
   setText('proc_info', procMsg + (logMsg ? '\\n' + logMsg : ''));
+  renderConfidenceSparkline(state);
   renderSystemStats(p.gpu || {});
   renderAgentChart(state);
+}
+
+function renderConfidenceSparkline(state) {
+  const poly = document.getElementById('confidence_polyline');
+  const label = document.getElementById('confidence_label');
+  if (!poly || !label) return;
+  const hist = state.history || [];
+  const vals = hist
+    .map(r => Number(r.confidence))
+    .filter(v => Number.isFinite(v))
+    .map(v => Math.max(0, Math.min(1, v)));
+  if (!vals.length) {
+    poly.setAttribute('points', '');
+    label.textContent = 'Confidence Trend: n/a';
+    return;
+  }
+  const width = 300;
+  const height = 44;
+  const n = vals.length;
+  const xStep = n > 1 ? width / (n - 1) : 0;
+  const pts = vals.map((v, i) => {
+    const x = (i * xStep).toFixed(1);
+    const y = (height - (v * (height - 4)) - 2).toFixed(1);
+    return `${x},${y}`;
+  }).join(' ');
+  poly.setAttribute('points', pts);
+  label.textContent = `Confidence Trend: ${(vals[vals.length - 1] * 100).toFixed(1)}%`;
 }
 
 function renderSystemStats(gpu) {
@@ -981,7 +1035,7 @@ class Handler(BaseHTTPRequestHandler):
             "unified_mem_used_mb": int(unified_used_mb),
             "unified_mem_total_mb": int(unified_total_mb),
             "power_w": power_total,
-            "power_limit_w": power_limit_total,
+            "power_limit_w": DGX_SPARK_MAX_POWER_W,
             "temp_c": temp_total / gpu_count,
             "per_gpu": per_gpu,
             "sample_status": "fresh",
